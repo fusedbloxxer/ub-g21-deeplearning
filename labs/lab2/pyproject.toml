@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "lab2"
+version = "0.1.0"
+description = ""
+authors = ["fusedbloxxer <voidwarden@yahoo.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "3.10.9"
+torch = "^2.1.0"
+numpy = "^1.26.1"
+tqdm = "^4.66.1"
+matplotlib = "^3.8.0"
+tensorflow = {extras = ["and-cuda"], version = "^2.14.0"}
+ipykernel = "^6.25.2"
+torchtext = "^0.16.0"
+portalocker = "^2.8.2"
+spacy = "^3.7.2"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
