@@ -1,0 +1,7 @@
+**/*.jpg
+**/*.mat
+**/*.tar
+**/*.tar.gz
+**/tmp
+README
+README~
