@@ -64,3 +64,39 @@ class ResCNN(nn.Module):
 
     def forward(self, x: Tensor) -> Tensor:
         return self.layers(x)
+
+
+class ConvBlock(nn.Module):
+    def __init__(self,
+                 chan:int,
+                 activ_fn: type[nn.Module],
+                 p=0.3
+                 ) -> None:
+        super(ConvBlock, self).__init__()
+        self.conv_layer = nn.Conv2d(chan, chan, kernel_size=3, stride=1)
+        self.bn_layer = nn.BatchNorm2d(chan)
+        self.activ_fn = activ_fn()
+        self.drop = nn.Dropout2d(p)
+
+    def forward(self, x: Tensor) -> Tensor:
+        x = self.bn_layer(self.conv_layer(x))
+        x = self.activ_fn(x)
+        x = self.drop(x)
+        return x
+
+
+# class DenseBlock(nn.Module):
+#     def __init__(self,
+#                  chan:int,
+#                  activ_fn: type[nn.Module],
+#                  p=0.3,
+#                  ) -> None:
+#         super(DenseBlock, self).__init__()
+#         self.layers = nn.ModuleDict()
+
+
+# class DenseCNN(nn.Module):
+#     def __init__(self,
+#                  *args,
+#                  **kwargs) -> None:
+#         super().__init__(*args, **kwargs)

@@ -1,4 +1,3 @@
-from typing import Any
 import torch
 import torch.nn as nn
 from torch import Tensor
@@ -7,7 +6,8 @@ from torch import optim as om
 from torch.utils.data import DataLoader, Dataset, random_split, ConcatDataset
 from torcheval.metrics import Mean, MulticlassF1Score
 import typing as t
-from typing import TypedDict, TypeVar, TypeAlias, Generic, Optional, Callable, Union, Tuple
+from abc import ABC, abstractmethod
+from typing import Any, Dict, TypedDict, TypeVar, TypeAlias, Generic, Optional, Callable, Union, Tuple, Literal, overload
 import tqdm as tm
 import optuna as opt
 from optuna import Trial
@@ -16,98 +16,171 @@ import pathlib as pl
 from pathlib import Path
 import wandb as wn
 
-from .data import load_data
+from . import wn_callback, CONST_NUM_CLASS
+from .data import TrainSplit, load_batched_data
+from .utils import forward_self
 from .model import ResCNN
-from . import wn_callback
 
 
-class HyperParameterSpace(TypedDict):
-    lr: float
-    epochs: int
-    optimizer: str
-    batch_size: int
-    weight_decay: float
-
-
-class ResCNNHPSpace(HyperParameterSpace):
-    pool: str
-    dropout1d: float
-    dropout2d: float
-    conv_chan: int
-    dens_chan: int
-    activ_fn: str
-
-
-HPS = TypeVar('HPS', bound=HyperParameterSpace)
-
-
-class HyperParameterSampler(Generic[HPS]):
-    def __init__(self, sampler: Callable[[Trial], HPS]) -> None:
+class HyperParameterSampler(object):
+    def __init__(self, sampler: Callable[[Trial], Dict[str, t.Any]]) -> None:
         self.__sampler = sampler
 
-    def __call__(self, trial: Trial) -> HPS:
+    def __call__(self, trial: Trial) -> Dict[str, Any]:
         return self.__sampler(trial)
 
 
-class Trainer(Generic[HPS]):
+class Trainer(ABC):
     def __init__(self,
-                 num_classes: int,
-                 hps: HyperParameterSampler[HPS],
                  dataset_path: Path,
-                 train_valid_split: Tuple[float,float]|t.Literal['disjoint']=(0.8, 0.2),
-                 device=torch.device('cuda'),
-                 seed: int=7982,
-                 prefetch_factor=4,
-                 num_workers=8
+                 hps: HyperParameterSampler,
+                 train_valid_split: TrainSplit = (0.8, 0.2),
+                 seed: int = 7982,
+                 num_workers=8,
+                 prefetch_factor: Optional[int] = 4,
+                 device=torch.device('cuda')
                  ) -> None:
-        super(Trainer, self).__init__()
 
         # Dataset
-        self.num_classes_ = num_classes
-        self.dataset_path_ = dataset_path
+        self.num_classes_ = CONST_NUM_CLASS
         self.num_workers_ = num_workers
-        self.prefetch_factor_ = prefetch_factor
+        self.dataset_path_ = dataset_path
         self.train_valid_split_ = train_valid_split
+        self.prefetch_factor_ = prefetch_factor
 
         # Runtime
         self.gen_ = torch.Generator('cpu').manual_seed(seed)
         self.device_ = device
 
         # HyperParameters
-        self.__hps = hps
+        self._hps = hps
 
-    @wn_callback.track_in_wandb()
-    def __call__(self, trial: Optional[opt.Trial], params: Optional[HPS]=None) -> float:
-        hparams = self.__hps.__call__(trial) if params is None else params
+    @abstractmethod
+    def __call__(self, trial: Trial) -> float:
+        raise NotImplementedError()
 
-        self.train_lr_, self.valid_lr_, _ = self.__create_loaders(hparams['batch_size'])
+    @abstractmethod
+    def train(self) -> nn.Module:
+        raise NotImplementedError()
 
-        self.model_ = ResCNN(**t.cast(t.Any, hparams)).to(self.device_)
+    @abstractmethod
+    def train_step(self, epoch: int):
+        raise NotImplementedError()
 
+    @abstractmethod
+    def valid_step(self, epoch: int, trial: Trial):
+        raise NotImplementedError()
+
+    @overload
+    def load_batched_data(self, batch_size: int, split: TrainSplit):
+        ...
+    @overload
+    def load_batched_data(self, batch_size: int):
+        ...
+    def load_batched_data(self, batch_size: int, split: Optional[TrainSplit] = None):
+        return load_batched_data(self.dataset_path_,
+                                 t.cast(TrainSplit, split or self.train_valid_split_),
+                                 seed=self.gen_.seed(),
+                                 batch_size=batch_size,
+                                 num_workers=self.num_workers_,
+                                 prefetch_factor=self.prefetch_factor_)
+
+
+class ClassificationTrainer(Trainer):
+    def __init__(self,
+                 model: type[nn.Module],
+                 *args,
+                 **kwargs) -> None:
+        super(ClassificationTrainer, self).__init__(*args, **kwargs)
+        self.model_factory = model
         self.loss_fn_ = nn.CrossEntropyLoss()
 
-        optim_type = t.cast(type[om.Adam], getattr(om, hparams['optimizer']))
-        self.optim_ = optim_type(self.model_.parameters(), lr=hparams['lr'], weight_decay=hparams['weight_decay'])
+    @forward_self(wn_callback.track_in_wandb())
+    def __call__(self, trial: Trial) -> float:
+        # Sample hyperparameters from search space
+        hparams = self._hps.__call__(trial)
 
+        # Shuffle the datasets
+        data_loaders = self.load_batched_data(hparams['batch_size'])
+        self.train_lr_ = t.cast(DataLoader[Tuple[Tensor, Tensor]], data_loaders[0])
+        self.valid_lr_ = t.cast(DataLoader[Tuple[Tensor, Tensor]], data_loaders[1])
+
+        # Instantiate model from scratch to perform optimization
+        self.model_ = self.model_factory(hparams).to(self.device_)
+
+        # Sample an optimizer similar to Adam to optimize the model weights
+        optim_type = t.cast(type[om.Adam], getattr(om, hparams['optimizer']))
+        self.optim_ = optim_type(self.model_.parameters(),
+                                 weight_decay=hparams['weight_decay'],
+                                 lr=hparams['lr'])
+
+        # Perform search by optimizing Validation F1-Score
         valid_f1_score: float = 0.0
         for epoch in tm.trange(hparams["epochs"], desc='epoch', position=0):
-            self.train_step(epoch)
-
-            if params is None:
-                valid_f1_score = self.valid_step(epoch, trial)
+            train_f1_score = self.train_step(epoch)
+            valid_f1_score = self.valid_step(epoch, trial)
         return valid_f1_score
 
+    def train(self, hparams: Dict[str, Any]):
+        # Initialize logging run, to ensure training goes well
+        wn.init(**wn_callback._wandb_kwargs)
+
+        # Merge validation into the training data and shuffle
+        data_loaders = self.load_batched_data(hparams['batch_size'], 'train')
+        self.train_lr_ = t.cast(DataLoader[Tuple[Tensor, Tensor]], data_loaders[0])
+
+        # Instantiate model from scratch to perform optimization
+        self.model_ = self.model_factory(hparams).to(self.device_)
+
+        # Use an optimizer similar to Adam to fit the model
+        optim_type = t.cast(type[om.Adam], getattr(om, hparams['optimizer']))
+        self.optim_ = optim_type(self.model_.parameters(),
+                                 weight_decay=hparams['weight_decay'],
+                                 lr=hparams['lr'])
+
+        # Train the model
+        train_f1_score = 0.0
+        for epoch in tm.trange(hparams["epochs"], desc='epoch', position=0):
+            train_f1_score = self.train_step(epoch)
+        return train_f1_score
+
+    def eval(self, hparams: Dict[str, Any]):
+        # Merge validation into the training data and shuffle
+        data_loaders = self.load_batched_data(hparams['batch_size'], 'disjoint')
+        self.test_lr_ = t.cast(DataLoader[Tuple[Tensor, Tensor]], data_loaders[2])
+
+        # Ensure evaluation mode is active
+        self.model_ = self.model_.eval().requires_grad_(False)
+
+        # Evaluate the model across all testing data
+        with tm.tqdm(desc='test_batch', total=len(self.test_lr_), position=1) as batch:
+            # Keep the predictions in a single place across evaluation
+            pred = torch.zeros((len(t.cast(t.Sequence, self.test_lr_.dataset)),), dtype=torch.int32, device=self.device_)
+
+            # Perform inference
+            for b, X in enumerate(self.test_lr_):
+                X: Tensor = X.to(self.device_)
+                y_pred = torch.argmax(self.model_(X), dim=-1)
+                index_from = b * t.cast(int, self.test_lr_.batch_size)
+                index_to = index_from + t.cast(int, self.test_lr_.batch_size)
+                pred[index_from: index_to] = y_pred
+
+        # Return list of predictions
+        return pred.cpu()
+
     def train_step(self, epoch: int):
+        # Ensure training mode is active
         self.model_ = self.model_.train(True).requires_grad_(True)
         metric_train_f1_score = MulticlassF1Score(num_classes=self.num_classes_, average='macro', device=self.device_)
         metric_train_loss = Mean(device=self.device_)
 
+        # Perform a training iteration across the entire dataset
         with tm.tqdm(desc='train_batch', total=len(self.train_lr_), position=1) as batch:
             for X, y in self.train_lr_:
                 # Send data to GPU
-                # TODO: KORNIA
                 X: Tensor = X.to(self.device_)
                 y_true: Tensor = y.to(self.device_)
+                # TODO: KORNIA
 
                 # Train
                 self.optim_.zero_grad()
@@ -121,22 +194,28 @@ class Trainer(Generic[HPS]):
                 metric_train_loss.update(loss.detach())
                 batch.update(1)
 
-        wn.log({ 'train_loss': metric_train_loss.compute().item(), 'epoch': epoch })
-        wn.log({ 'train_f1_score': metric_train_f1_score.compute().item(), 'epoch': epoch })
+        # Log Metrics
+        train_f1_score = metric_train_f1_score.compute().item()
+        wn.log({'train_loss': metric_train_loss.compute().item(), 'epoch': epoch})
+        wn.log({'train_f1_score': metric_train_f1_score.compute().item(), 'epoch': epoch})
         metric_train_f1_score.reset()
         metric_train_loss.reset()
+        return train_f1_score
 
     def valid_step(self, epoch: int, trial: Trial):
+        # Ensure evaluation mode is active
         self.model_ = self.model_.eval().requires_grad_(False)
-        metric_valid_f1_score = MulticlassF1Score(num_classes=self.num_classes_, average='macro', device=self.device_)
+        metric_valid_f1_score = MulticlassF1Score(
+            num_classes=self.num_classes_, average='macro', device=self.device_)
         metric_valid_loss = Mean(device=self.device_)
 
+        # Perform a validation iteration across the entire dataset
         with tm.tqdm(desc='valid_batch', total=len(self.valid_lr_), position=1) as batch:
             for X, y in self.valid_lr_:
                 # Send data to GPU
-                # TODO: KORNIA
                 X: Tensor = X.to(self.device_)
                 y_true: Tensor = y.to(self.device_)
+                # TODO: KORNIA
 
                 # Infer
                 with torch.no_grad():
@@ -148,29 +227,17 @@ class Trainer(Generic[HPS]):
                 metric_valid_loss.update(loss)
                 batch.update(1)
 
+        # Log Metrics
         valid_f1_score = metric_valid_f1_score.compute().item()
-        wn.log({ 'valid_loss': metric_valid_loss.compute().item(), 'epoch': epoch })
-        wn.log({ 'valid_f1_score': valid_f1_score, 'epoch': epoch })
+        wn.log({'valid_loss': metric_valid_loss.compute().item(), 'epoch': epoch})
+        wn.log({'valid_f1_score': valid_f1_score, 'epoch': epoch})
         metric_valid_loss.reset()
         metric_valid_f1_score.reset()
         trial.report(valid_f1_score, epoch)
 
+        # Cut the search path if it's underperforming
         if trial.should_prune():
             raise opt.TrialPruned()
 
+        # Otherwise continue the search
         return valid_f1_score
-
-    def __create_loaders(self, batch_size: int):
-        data = load_data(self.dataset_path_, True)
-        train_ds = t.cast(Dataset[Tuple[Tensor, Tensor]], data[0])
-        valid_ds = t.cast(Dataset[Tuple[Tensor, Tensor]], data[1])
-        test_ds = t.cast(Dataset[Tensor], t.cast(t.Any, data)[2])
-
-        if isinstance(self.train_valid_split_, tuple):
-            train_ds = ConcatDataset([train_ds, valid_ds])
-            train_ds, valid_ds = random_split(train_ds, self.train_valid_split_, self.gen_)
-
-        train_dl = DataLoader(train_ds, batch_size, True, prefetch_factor=self.prefetch_factor_, num_workers=self.num_workers_, generator=self.gen_)
-        valid_dl = DataLoader(valid_ds, batch_size, True, prefetch_factor=self.prefetch_factor_, num_workers=self.num_workers_, generator=self.gen_)
-        test_dl = DataLoader(test_ds, batch_size, False, prefetch_factor=self.prefetch_factor_, num_workers=self.num_workers_, generator=self.gen_)
-        return train_dl, valid_dl, test_dl
