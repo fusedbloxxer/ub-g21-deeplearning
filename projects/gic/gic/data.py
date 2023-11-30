@@ -24,7 +24,6 @@ class GenImageDataset(data.Dataset[t.Tuple[Tensor, Tensor] | Tensor]):
         self.__preprocess = preprocess
         self.__transform = Compose([
             ToDtype(dtype=torch.float32, scale=True),
-            # Resize(size=(224, 244), antialias=True),
             Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ])
 
@@ -35,7 +34,6 @@ class GenImageDataset(data.Dataset[t.Tuple[Tensor, Tensor] | Tensor]):
 
         if self.__preprocess:
             image = self.__transform(image)
-
         if self.__split == 'test':
             return image
 
@@ -46,9 +44,21 @@ class GenImageDataset(data.Dataset[t.Tuple[Tensor, Tensor] | Tensor]):
         return len(self.__data)
 
 
-def load_data(path: pl.Path) -> t.Tuple[data.Dataset[t.Tuple[Tensor, Tensor]], data.Dataset[Tensor]]:
-    test_data = GenImageDataset(path, 'test')
-    valid_data = GenImageDataset(path, 'val')
-    train_data = GenImageDataset(path, 'train')
-    train_data = data.ConcatDataset([train_data, valid_data])
-    return train_data, t.cast(data.Dataset[Tensor], test_data)
+def load_data(path: pl.Path, disjoint: bool=True, preprocess: bool=True) -> t.Tuple[data.Dataset[t.Tuple[Tensor, Tensor]], data.Dataset[Tensor]] | t.Tuple[data.Dataset[t.Tuple[Tensor, Tensor]], data.Dataset[t.Tuple[Tensor, Tensor]], data.Dataset[Tensor]]:
+    # Read all subsets
+    train_data = GenImageDataset(path, 'train', preprocess)
+    valid_data = GenImageDataset(path, 'val', preprocess)
+    test_data = GenImageDataset(path, 'test', preprocess)
+
+    # Read all subsets
+    test_data = t.cast(data.Dataset[Tensor], test_data)
+    valid_data = t.cast(data.Dataset[t.Tuple[Tensor, Tensor]], valid_data)
+    train_data = t.cast(data.Dataset[t.Tuple[Tensor, Tensor]], train_data)
+
+    # Merge validation with training data
+    if not disjoint:
+        train_data = data.ConcatDataset([train_data, valid_data])
+        return train_data, test_data
+
+    # Otherwise keep all of them separate
+    return train_data, valid_data, test_data
