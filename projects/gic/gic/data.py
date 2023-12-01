@@ -9,6 +9,8 @@ import pandas as ps
 import torch.utils.data as data
 from torch.utils.data import DataLoader, Dataset, ConcatDataset, random_split
 
+from . import pin_memory
+
 
 TrainSplit: TypeAlias = Tuple[float, float] | Literal['disjoint', 'train']
 
@@ -84,7 +86,8 @@ def load_batched_data(path: pl.Path, split: TrainSplit, *, seed=7982, **kwargs):
     settings = {
         'prefetch_factor': kwargs.pop('prefetch_factor', None),
         'batch_size': kwargs.pop('batch_size', None),
-        'num_workers': kwargs.pop('num_workers', 0)
+        'num_workers': kwargs.pop('num_workers', 0),
+        'pin_memory': pin_memory,
     }
 
     # Decide how to split the training data

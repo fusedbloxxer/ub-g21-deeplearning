@@ -3,6 +3,9 @@ import torch.nn as nn
 from torch import Tensor
 from torch.nn import Module
 from torch import optim as om
+from torch.amp.autocast_mode import autocast
+from torch.cuda.amp.grad_scaler import GradScaler
+from torch.profiler import profile, record_function, ProfilerActivity, schedule
 from torch.utils.data import DataLoader, Dataset, random_split, ConcatDataset
 from torcheval.metrics import Mean, MulticlassF1Score
 import typing as t
@@ -16,10 +19,10 @@ import pathlib as pl
 from pathlib import Path
 import wandb as wn
 
-from . import wn_callback, CONST_NUM_CLASS
+from . import wn_callback, CONST_NUM_CLASS, LOG_PATH
 from .data import TrainSplit, load_batched_data
+from .profile import TrainProfiler
 from .utils import forward_self
-from .model import ResCNN
 
 
 class HyperParameterSampler(object):
@@ -37,20 +40,29 @@ class Trainer(ABC):
                  train_valid_split: TrainSplit = (0.8, 0.2),
                  seed: int = 7982,
                  num_workers=8,
+                 profiling: bool=False,
+                 mix_float: bool=False,
                  prefetch_factor: Optional[int] = 4,
                  device=torch.device('cuda')
                  ) -> None:
-
         # Dataset
-        self.num_classes_ = CONST_NUM_CLASS
-        self.num_workers_ = num_workers
-        self.dataset_path_ = dataset_path
-        self.train_valid_split_ = train_valid_split
-        self.prefetch_factor_ = prefetch_factor
+        self._num_classes = CONST_NUM_CLASS
+        self._num_workers = num_workers
+        self._dataset_path = dataset_path
+        self._train_valid_split = train_valid_split
+        self._prefetch_factor = prefetch_factor
 
         # Runtime
-        self.gen_ = torch.Generator('cpu').manual_seed(seed)
-        self.device_ = device
+        self._gen = torch.Generator('cpu').manual_seed(seed)
+        self._profiler = TrainProfiler(enable=profiling)
+        self._mix_float = mix_float
+        self._device = device
+
+        # Metrics
+        self._metric_train_f1_score = MulticlassF1Score(num_classes=self._num_classes, average='macro', device=self._device)
+        self._metric_valid_f1_score = MulticlassF1Score(num_classes=self._num_classes, average='macro', device=self._device)
+        self._metric_train_loss = Mean(device=self._device)
+        self._metric_valid_loss = Mean(device=self._device)
 
         # HyperParameters
         self._hps = hps
@@ -60,15 +72,19 @@ class Trainer(ABC):
         raise NotImplementedError()
 
     @abstractmethod
+    def _train_step(self, epoch: int):
+        raise NotImplementedError()
+
+    @abstractmethod
+    def _valid_step(self, epoch: int, trial: Trial):
+        raise NotImplementedError()
+
+    @abstractmethod
     def train(self) -> nn.Module:
         raise NotImplementedError()
 
     @abstractmethod
-    def train_step(self, epoch: int):
-        raise NotImplementedError()
-
-    @abstractmethod
-    def valid_step(self, epoch: int, trial: Trial):
+    def eval(self) -> nn.Module:
         raise NotImplementedError()
 
     @overload
@@ -78,12 +94,12 @@ class Trainer(ABC):
     def load_batched_data(self, batch_size: int):
         ...
     def load_batched_data(self, batch_size: int, split: Optional[TrainSplit] = None):
-        return load_batched_data(self.dataset_path_,
-                                 t.cast(TrainSplit, split or self.train_valid_split_),
-                                 seed=self.gen_.seed(),
+        return load_batched_data(self._dataset_path,
+                                 t.cast(TrainSplit, split or self._train_valid_split),
+                                 seed=self._gen.seed(),
                                  batch_size=batch_size,
-                                 num_workers=self.num_workers_,
-                                 prefetch_factor=self.prefetch_factor_)
+                                 num_workers=self._num_workers,
+                                 prefetch_factor=self._prefetch_factor)
 
 
 class ClassificationTrainer(Trainer):
@@ -92,34 +108,115 @@ class ClassificationTrainer(Trainer):
                  *args,
                  **kwargs) -> None:
         super(ClassificationTrainer, self).__init__(*args, **kwargs)
-        self.model_factory = model
-        self.loss_fn_ = nn.CrossEntropyLoss()
+        self.__model_factory = model
+        self.loss_fn = nn.CrossEntropyLoss()
 
     @forward_self(wn_callback.track_in_wandb())
     def __call__(self, trial: Trial) -> float:
-        # Sample hyperparameters from search space
-        hparams = self._hps.__call__(trial)
+        """Optimize hyperparams using Optuna by repeated sampling."""
+        self.__hparams = self._hps.__call__(trial)
+        self.__trial = trial
+        wn.config = self.__hparams
 
         # Shuffle the datasets
-        data_loaders = self.load_batched_data(hparams['batch_size'])
-        self.train_lr_ = t.cast(DataLoader[Tuple[Tensor, Tensor]], data_loaders[0])
-        self.valid_lr_ = t.cast(DataLoader[Tuple[Tensor, Tensor]], data_loaders[1])
+        data_loaders = self.load_batched_data(self.__hparams['batch_size'])
+        self.__train_lr = t.cast(DataLoader[Tuple[Tensor, Tensor]], data_loaders[0])
+        self.__valid_lr = t.cast(DataLoader[Tuple[Tensor, Tensor]], data_loaders[1])
 
         # Instantiate model from scratch to perform optimization
-        self.model_ = self.model_factory(hparams).to(self.device_)
+        self.model = self.__model_factory(**self.__hparams).to(self._device)
+        print(self.model)
 
         # Sample an optimizer similar to Adam to optimize the model weights
-        optim_type = t.cast(type[om.Adam], getattr(om, hparams['optimizer']))
-        self.optim_ = optim_type(self.model_.parameters(),
-                                 weight_decay=hparams['weight_decay'],
-                                 lr=hparams['lr'])
+        optim_type = t.cast(type[om.Adam], getattr(om, self.__hparams['optimizer']))
+        self.__optim = optim_type(self.model.parameters(),
+                                  weight_decay=self.__hparams['weight_decay'],
+                                  lr=self.__hparams['lr'])
+        return self.__optimize()
 
-        # Perform search by optimizing Validation F1-Score
-        valid_f1_score: float = 0.0
-        for epoch in tm.trange(hparams["epochs"], desc='epoch', position=0):
-            train_f1_score = self.train_step(epoch)
-            valid_f1_score = self.valid_step(epoch, trial)
-        return valid_f1_score
+    def __optimize(self) -> float:
+        """Optimize hyperparams using Optuna by maximizing f1-score on validation subset."""
+        self.__grad_scaler = GradScaler()
+        for epoch in tm.trange(self.__hparams["epochs"], desc='epochs'):
+            self._train_step(epoch)
+            self._valid_step(epoch)
+        return self._metric_valid_f1_score.compute().item()
+
+    def _train_step(self, epoch: int):
+        # Ensure training mode is active
+        self.model.train(True)
+        self._metric_train_loss.reset()
+        self._metric_train_f1_score.reset()
+
+        # Perform a training iteration across the entire dataset
+        with tm.tqdm(desc='train_batch', total=len(self.__train_lr)) as batch:
+            with self._profiler as profiler:
+                for X, y in self.__train_lr:
+                    # TODO: KORNIA
+                    # Send data to GPU
+                    X: Tensor = X.to(self._device)
+                    y_true: Tensor = y.to(self._device)
+                    self.__optim.zero_grad(set_to_none=True)
+
+                    # Use MixedPrecision to leverage TensorCores (multiples of 8)
+                    with autocast(self._device.type, torch.float16, enabled=self._mix_float):
+                        logits: Tensor = self.model(X)
+                        loss: Tensor = self.loss_fn(logits, y_true)
+
+                    # Update grads
+                    if self._mix_float:
+                        t.cast(Tensor, self.__grad_scaler.scale(loss)).backward()
+                        self.__grad_scaler.step(self.__optim)
+                    else:
+                        loss.backward()
+                        self.__optim.step()
+
+                    # Track metrics
+                    self._metric_train_f1_score.update(logits.detach(), y_true)
+                    self._metric_train_loss.update(loss.detach())
+
+                    # Mark batch as done
+                    if self._mix_float:
+                        self.__grad_scaler.update()
+                    profiler.step()
+                    batch.update(1)
+
+        # Log Metrics
+        train_loss = self._metric_train_loss.compute().item()
+        train_f1_score = self._metric_train_f1_score.compute().item()
+        wn.log({'train_loss': train_loss, 'epoch': epoch})
+        wn.log({'train_f1_score': train_f1_score, 'epoch': epoch})
+
+    def _valid_step(self, epoch: int):
+        # Ensure evaluation mode is active
+        self.model = self.model.eval()
+        self._metric_valid_f1_score.reset()
+        self._metric_valid_loss.reset()
+
+        # Perform a validation iteration across the entire dataset
+        with tm.tqdm(desc='valid_batch', total=len(self.__valid_lr)) as batch:
+            with torch.no_grad():
+                for X, y in self.__valid_lr:
+                    # TODO: KORNIA
+                    # Send data to GPU
+                    X: Tensor = X.to(self._device)
+                    y_true: Tensor = y.to(self._device)
+
+                    # Infer
+                    logits: Tensor = self.model(X)
+
+                    # Track metrics
+                    loss: Tensor = self.loss_fn(logits, y_true)
+                    self._metric_valid_f1_score.update(logits, y_true)
+                    self._metric_valid_loss.update(loss)
+                    batch.update(1)
+
+        # Log Metrics
+        valid_loss = self._metric_valid_loss.compute().item()
+        valid_f1_score = self._metric_valid_f1_score.compute().item()
+        wn.log({'valid_loss': valid_loss, 'epoch': epoch})
+        wn.log({'valid_f1_score': valid_f1_score, 'epoch': epoch})
+        self.__trial.report(valid_f1_score, epoch)
 
     def train(self, hparams: Dict[str, Any]):
         # Initialize logging run, to ensure training goes well
@@ -127,22 +224,21 @@ class ClassificationTrainer(Trainer):
 
         # Merge validation into the training data and shuffle
         data_loaders = self.load_batched_data(hparams['batch_size'], 'train')
-        self.train_lr_ = t.cast(DataLoader[Tuple[Tensor, Tensor]], data_loaders[0])
+        self.__train_lr = t.cast(DataLoader[Tuple[Tensor, Tensor]], data_loaders[0])
 
         # Instantiate model from scratch to perform optimization
-        self.model_ = self.model_factory(hparams).to(self.device_)
+        self.model = self.__model_factory(**hparams).to(self._device)
 
         # Use an optimizer similar to Adam to fit the model
         optim_type = t.cast(type[om.Adam], getattr(om, hparams['optimizer']))
-        self.optim_ = optim_type(self.model_.parameters(),
-                                 weight_decay=hparams['weight_decay'],
-                                 lr=hparams['lr'])
+        self.__optim = optim_type(self.model.parameters(),
+                                  weight_decay=hparams['weight_decay'],
+                                  lr=hparams['lr'])
 
         # Train the model
-        train_f1_score = 0.0
         for epoch in tm.trange(hparams["epochs"], desc='epoch', position=0):
-            train_f1_score = self.train_step(epoch)
-        return train_f1_score
+            self._train_step(epoch)
+        return self._metric_train_f1_score.compute().item()
 
     def eval(self, hparams: Dict[str, Any]):
         # Merge validation into the training data and shuffle
@@ -150,94 +246,21 @@ class ClassificationTrainer(Trainer):
         self.test_lr_ = t.cast(DataLoader[Tuple[Tensor, Tensor]], data_loaders[2])
 
         # Ensure evaluation mode is active
-        self.model_ = self.model_.eval().requires_grad_(False)
+        self.model = self.model.eval()
 
         # Evaluate the model across all testing data
         with tm.tqdm(desc='test_batch', total=len(self.test_lr_), position=1) as batch:
             # Keep the predictions in a single place across evaluation
-            pred = torch.zeros((len(t.cast(t.Sequence, self.test_lr_.dataset)),), dtype=torch.int32, device=self.device_)
+            pred = torch.zeros((len(t.cast(t.Sequence, self.test_lr_.dataset)),), dtype=torch.int32, device=self._device)
 
             # Perform inference
             for b, X in enumerate(self.test_lr_):
-                X: Tensor = X.to(self.device_)
-                y_pred = torch.argmax(self.model_(X), dim=-1)
+                X: Tensor = X.to(self._device)
+                y_pred = torch.argmax(self.model(X), dim=-1)
                 index_from = b * t.cast(int, self.test_lr_.batch_size)
                 index_to = index_from + t.cast(int, self.test_lr_.batch_size)
                 pred[index_from: index_to] = y_pred
+                batch.update(1)
 
         # Return list of predictions
         return pred.cpu()
-
-    def train_step(self, epoch: int):
-        # Ensure training mode is active
-        self.model_ = self.model_.train(True).requires_grad_(True)
-        metric_train_f1_score = MulticlassF1Score(num_classes=self.num_classes_, average='macro', device=self.device_)
-        metric_train_loss = Mean(device=self.device_)
-
-        # Perform a training iteration across the entire dataset
-        with tm.tqdm(desc='train_batch', total=len(self.train_lr_), position=1) as batch:
-            for X, y in self.train_lr_:
-                # Send data to GPU
-                X: Tensor = X.to(self.device_)
-                y_true: Tensor = y.to(self.device_)
-                # TODO: KORNIA
-
-                # Train
-                self.optim_.zero_grad()
-                logits: Tensor = self.model_(X)
-                loss: Tensor = self.loss_fn_(logits, y_true)
-                loss.backward()
-                self.optim_.step()
-
-                # Track metrics
-                metric_train_f1_score.update(logits.detach(), y_true)
-                metric_train_loss.update(loss.detach())
-                batch.update(1)
-
-        # Log Metrics
-        train_f1_score = metric_train_f1_score.compute().item()
-        wn.log({'train_loss': metric_train_loss.compute().item(), 'epoch': epoch})
-        wn.log({'train_f1_score': metric_train_f1_score.compute().item(), 'epoch': epoch})
-        metric_train_f1_score.reset()
-        metric_train_loss.reset()
-        return train_f1_score
-
-    def valid_step(self, epoch: int, trial: Trial):
-        # Ensure evaluation mode is active
-        self.model_ = self.model_.eval().requires_grad_(False)
-        metric_valid_f1_score = MulticlassF1Score(
-            num_classes=self.num_classes_, average='macro', device=self.device_)
-        metric_valid_loss = Mean(device=self.device_)
-
-        # Perform a validation iteration across the entire dataset
-        with tm.tqdm(desc='valid_batch', total=len(self.valid_lr_), position=1) as batch:
-            for X, y in self.valid_lr_:
-                # Send data to GPU
-                X: Tensor = X.to(self.device_)
-                y_true: Tensor = y.to(self.device_)
-                # TODO: KORNIA
-
-                # Infer
-                with torch.no_grad():
-                    logits: Tensor = self.model_(X)
-
-                # Track metrics
-                loss: Tensor = self.loss_fn_(logits, y_true)
-                metric_valid_f1_score.update(logits, y_true)
-                metric_valid_loss.update(loss)
-                batch.update(1)
-
-        # Log Metrics
-        valid_f1_score = metric_valid_f1_score.compute().item()
-        wn.log({'valid_loss': metric_valid_loss.compute().item(), 'epoch': epoch})
-        wn.log({'valid_f1_score': valid_f1_score, 'epoch': epoch})
-        metric_valid_loss.reset()
-        metric_valid_f1_score.reset()
-        trial.report(valid_f1_score, epoch)
-
-        # Cut the search path if it's underperforming
-        if trial.should_prune():
-            raise opt.TrialPruned()
-
-        # Otherwise continue the search
-        return valid_f1_score

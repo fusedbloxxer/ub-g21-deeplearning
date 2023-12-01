@@ -1,16 +1,15 @@
-0. Standardize Tuning & Full-Training
-1. Easier/Faster submission
+0. Standardize Tuning & Full-Training - ok
+1. Easier/Faster submission - ok
 2. Fix tracking issues:
-    - decorator function issues
-    - proper logging and tagging
-    - understand difference between runs and experiments
+    - decorator function issues - ok
+    - understand difference between runs and experiments - ok
+    - proper logging and tagging - todo params
 3. Models:
     - Denoising AutoEncoder + CNN
-    - DenseNet
+    - DenseNet - in progress
     - ConvNeXt
     - ViT
 4. Data Augmentation:
     - Kornia
-5. Initialization: Glorot
-6. Regularization Techniques
-7. Ensemble of Models
+5. Regularization Techniques
+6. Ensemble of Models

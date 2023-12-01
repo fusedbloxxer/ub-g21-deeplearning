@@ -17,10 +17,10 @@ release = False
 ROOT_PATH = pl.Path('..')
 GIT_PATH = ROOT_PATH / '..' / '..'
 DATA_PATH = ROOT_PATH / 'data'
-TRACK_PATH = ROOT_PATH / 'tracking'
-CKPT_PATH = TRACK_PATH / 'ckpt'
+CKPT_PATH = DATA_PATH / 'ckpt'
 SUBMISSIONS_PATH = ROOT_PATH / 'submissions'
 NOTEBOOKS_PATH = ROOT_PATH / 'notebooks'
+LOG_PATH = ROOT_PATH / 'log'
 
 # Versioning
 git_repo = Repo(GIT_PATH)
@@ -30,10 +30,9 @@ SUBMISSION_PATH = SUBMISSIONS_PATH / f'{git_repo.active_branch.name}.csv'
 so.environ['WANDB_NOTEBOOK_NAME'] = str(NOTEBOOKS_PATH / 'main.ipynb')
 login_settings = {}
 init_settings = {
-    'dir': TRACK_PATH,
     'project': 'Generated Image Classification',
-    'notes': 'Building up the training framework',
-    'tags': ['test', git_repo.active_branch.name]
+    'notes': 'Experimentation',
+    'tags': [git_repo.active_branch.name, 'DenseNet']
 }
 
 # Use an account only during development
@@ -62,10 +61,13 @@ wn_callback = WeightsAndBiasesCallback(
 )
 
 # Hardware
+torch.backends.cudnn.benchmark = True
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-prefetch_factor = None
-num_workers = 0
-batch_size = 32
+prefetch_factor = 1_000
+num_workers = 4
+pin_memory = True
+mix_float = True
+profiling = False
 
 # Reproducibility
 SEED = 7982
