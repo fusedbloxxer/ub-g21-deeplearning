@@ -20,7 +20,7 @@ from pathlib import Path
 import wandb as wn
 
 from . import wn_callback, CONST_NUM_CLASS, LOG_PATH
-from .data import TrainSplit, load_batched_data
+from .data import GenImageAugment, TrainSplit, load_batched_data
 from .profile import TrainProfiler
 from .utils import forward_self
 
@@ -38,6 +38,7 @@ class Trainer(ABC):
                  dataset_path: Path,
                  hps: HyperParameterSampler,
                  train_valid_split: TrainSplit = (0.8, 0.2),
+                 augment: bool=False,
                  seed: int = 7982,
                  num_workers=8,
                  profiling: bool=False,
@@ -46,11 +47,14 @@ class Trainer(ABC):
                  device=torch.device('cuda')
                  ) -> None:
         # Dataset
+        self._augment = augment
         self._num_classes = CONST_NUM_CLASS
         self._num_workers = num_workers
         self._dataset_path = dataset_path
         self._train_valid_split = train_valid_split
         self._prefetch_factor = prefetch_factor
+        self._normalize_fn = GenImageAugment(normalize=True, augment=False)
+        self._augment_fn = self._normalize_fn if not augment else GenImageAugment(normalize=True, augment=True)
 
         # Runtime
         self._gen = torch.Generator('cpu').manual_seed(seed)
@@ -98,6 +102,7 @@ class Trainer(ABC):
                                  t.cast(TrainSplit, split or self._train_valid_split),
                                  seed=self._gen.seed(),
                                  batch_size=batch_size,
+                                 normalize=False,
                                  num_workers=self._num_workers,
                                  prefetch_factor=self._prefetch_factor)
 
@@ -117,6 +122,8 @@ class ClassificationTrainer(Trainer):
         self.__hparams = self._hps.__call__(trial)
         self.__trial = trial
         wn.config = self.__hparams
+        wn.config['augment'] = self._augment
+        wn.log({ 'augment': self._augment })
 
         # Shuffle the datasets
         data_loaders = self.load_batched_data(self.__hparams['batch_size'])
@@ -132,11 +139,12 @@ class ClassificationTrainer(Trainer):
         self.__optim = optim_type(self.model.parameters(),
                                   weight_decay=self.__hparams['weight_decay'],
                                   lr=self.__hparams['lr'])
+        self.__optim_scheduler = om.lr_scheduler.ReduceLROnPlateau(self.__optim, 'max', 0.75, 10, min_lr=2e-4, cooldown=5, verbose=True)
+        self.__grad_scaler = GradScaler()
         return self.__optimize()
 
     def __optimize(self) -> float:
         """Optimize hyperparams using Optuna by maximizing f1-score on validation subset."""
-        self.__grad_scaler = GradScaler()
         for epoch in tm.trange(self.__hparams["epochs"], desc='epochs'):
             self._train_step(epoch)
             self._valid_step(epoch)
@@ -154,7 +162,7 @@ class ClassificationTrainer(Trainer):
                 for X, y in self.__train_lr:
                     # TODO: KORNIA
                     # Send data to GPU
-                    X: Tensor = X.to(self._device)
+                    X: Tensor = self._augment_fn(X.to(self._device))
                     y_true: Tensor = y.to(self._device)
                     self.__optim.zero_grad(set_to_none=True)
 
@@ -180,6 +188,7 @@ class ClassificationTrainer(Trainer):
                         self.__grad_scaler.update()
                     profiler.step()
                     batch.update(1)
+                self.__optim_scheduler.step(self._metric_train_f1_score.compute().item())
 
         # Log Metrics
         train_loss = self._metric_train_loss.compute().item()
@@ -199,7 +208,7 @@ class ClassificationTrainer(Trainer):
                 for X, y in self.__valid_lr:
                     # TODO: KORNIA
                     # Send data to GPU
-                    X: Tensor = X.to(self._device)
+                    X: Tensor = self._normalize_fn(X.to(self._device))
                     y_true: Tensor = y.to(self._device)
 
                     # Infer
@@ -218,9 +227,15 @@ class ClassificationTrainer(Trainer):
         wn.log({'valid_f1_score': valid_f1_score, 'epoch': epoch})
         self.__trial.report(valid_f1_score, epoch)
 
+        # # Prune if accuracy is not good enough
+        # if self.__trial.should_prune():
+        #     raise opt.TrialPruned()
+
     def train(self, hparams: Dict[str, Any]):
         # Initialize logging run, to ensure training goes well
         wn.init(**wn_callback._wandb_kwargs)
+        wn.config['augment'] = self._augment
+        wn.log({ 'augment': self._augment })
 
         # Merge validation into the training data and shuffle
         data_loaders = self.load_batched_data(hparams['batch_size'], 'train')
@@ -234,6 +249,8 @@ class ClassificationTrainer(Trainer):
         self.__optim = optim_type(self.model.parameters(),
                                   weight_decay=hparams['weight_decay'],
                                   lr=hparams['lr'])
+        self.__optim_scheduler = om.lr_scheduler.ReduceLROnPlateau(self.__optim, 'max', 0.75, 10, min_lr=2e-4, cooldown=5, verbose=True)
+        self.__grad_scaler = GradScaler()
 
         # Train the model
         for epoch in tm.trange(hparams["epochs"], desc='epoch', position=0):
@@ -255,7 +272,7 @@ class ClassificationTrainer(Trainer):
 
             # Perform inference
             for b, X in enumerate(self.test_lr_):
-                X: Tensor = X.to(self._device)
+                X: Tensor = self._normalize_fn(X.to(self._device))
                 y_pred = torch.argmax(self.model(X), dim=-1)
                 index_from = b * t.cast(int, self.test_lr_.batch_size)
                 index_to = index_from + t.cast(int, self.test_lr_.batch_size)

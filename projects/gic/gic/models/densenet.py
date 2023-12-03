@@ -2,7 +2,6 @@ import torch.nn as nn
 import torch
 from torch import Tensor
 import typing as t
-from torch.profiler import record_function
 
 from ..tune import HyperParameterSampler
 
@@ -35,7 +34,7 @@ class DenseConvBlock(nn.Module):
         super(DenseConvBlock, self).__init__()
         self.bn_layer = nn.BatchNorm2d(ichan)
         self.activ_fn = create_activ_fn(activ_fn)
-        self.conv_layer = nn.Conv2d(ichan, features, kernel, 1, pad, bias=False)
+        self.conv_layer = nn.Conv2d(ichan, features, kernel, 1, pad, bias=True)
         self.drop = nn.Dropout2d(drop)
 
     def forward(self, x: Tensor) -> Tensor:
@@ -90,10 +89,8 @@ class DenseBlock(nn.Module):
             self.layers.append(DenseCompConvBlock(ichan + l * features, features, factor_c, activ_fn, drop))
 
     def forward(self, x: Tensor) -> Tensor:
-        with record_function('dense_chain'):
-            for l in self.layers:
-                with record_function(f'dense_block_{l}'):
-                    x = torch.cat([x, l(x)], dim=1)
+        for l in self.layers:
+                x = torch.cat([x, l(x)], dim=1)
         return x
 
 
@@ -144,45 +141,46 @@ class DenseCNN(nn.Module):
             chan += features * inner
             self.dense_layers.append(DenseDownBlock(chan, factor_t, activ_fn, pool, c_drop))
             chan = int(chan * factor_t)
+        self.dense_layers.append(nn.AdaptiveMaxPool2d(1))
+        self.dense_layers.append(nn.Flatten())
 
         # Apply classification
         self.classifier = nn.Sequential(
-            nn.AdaptiveAvgPool2d(1),
-            nn.Flatten(),
-
+            nn.Dropout1d(f_drop),
             nn.Linear(in_features=chan, out_features=dense),
             nn.BatchNorm1d(dense),
             create_activ_fn(activ_fn),
-            nn.Dropout1d(f_drop),
 
+            nn.Dropout1d(f_drop),
             nn.Linear(in_features=dense, out_features=dense),
             nn.BatchNorm1d(dense),
             create_activ_fn(activ_fn),
-            nn.Dropout1d(f_drop),
 
             nn.Linear(in_features=dense, out_features=100)
         )
 
     def forward(self, x: Tensor) -> Tensor:
+        # Extract local information from the image
         x = self.input_conv(x)
         x = self.dense_layers(x)
         x = self.classifier(x)
         return x
 
+
 densenet_sampler = HyperParameterSampler(lambda trial: {
-    'lr': 1e-3,
-    'epochs': 100,
+    'lr': 6e-4,
+    'dense': 512,
+    'pool': 'max',
+    'epochs': 300,
     'batch_size': 32,
+    'activ_fn': 'SiLU',
     'optimizer': 'Adam',
-    'weight_decay': trial.suggest_float('weight_decay', 1e-6, 1e-4),
-    'dense': trial.suggest_int('dense', 128, 256, step=128),
-    'features': trial.suggest_int('factor_g', 4, 16, step=4),
-    'factor_c': trial.suggest_float('factor_c', 0.5, 1, step=0.25),
-    'factor_t': trial.suggest_float('factor_t', 0.5, 1, step=0.25),
-    'activ_fn': trial.suggest_categorical('activ', ['SiLU', 'GELU']),
-    'pool': trial.suggest_categorical('pool', ['max', 'avg']),
-    'repeat': trial.suggest_int('repeat', 1, 4, step=1),
-    'inner': trial.suggest_int('inner', 1, 4, step=1),
-    'f_drop': trial.suggest_float('dense_dropout', 0.2, 0.4),
-    'c_drop': trial.suggest_float('conv_dropout', 0.1, 0.3),
+    'weight_decay': 4e-5,
+    'inner': trial.suggest_int('inner', 3, 3, step=1),
+    'repeat': trial.suggest_int('repeat', 3, 3, step=1),
+    'f_drop': trial.suggest_float('dense_dropout', 0.3, 0.3),
+    'c_drop': trial.suggest_float('conv_dropout', 0.2, 0.2),
+    'features': trial.suggest_int('factor_g', 12, 16, step=4),
+    'factor_c': trial.suggest_float('factor_c', 1, 1, step=0.25),
+    'factor_t': trial.suggest_float('factor_t', 1, 1, step=0.25),
 })

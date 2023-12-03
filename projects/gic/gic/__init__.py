@@ -32,7 +32,7 @@ login_settings = {}
 init_settings = {
     'project': 'Generated Image Classification',
     'notes': 'Experimentation',
-    'tags': [git_repo.active_branch.name, 'DenseNet']
+    'tags': [git_repo.active_branch.name, 'DenseCNN', 'Augment']
 }
 
 # Use an account only during development
@@ -62,6 +62,7 @@ wn_callback = WeightsAndBiasesCallback(
 
 # Hardware
 torch.backends.cudnn.benchmark = True
+torch.set_float32_matmul_precision('medium')
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 prefetch_factor = 1_000
 num_workers = 4
@@ -79,6 +80,3 @@ gen_torch = torch.Generator('cpu').manual_seed(SEED)
 
 # Constants
 CONST_NUM_CLASS = 100
-
-# Miscellaneous
-db_uri = r'sqlite:///test.db'

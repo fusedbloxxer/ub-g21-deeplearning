@@ -1,6 +1,10 @@
 import torch
+import torch.nn as nn
+import kornia as K
+import kornia.augmentation as KA
 from torch import Tensor
 import torchvision as tn
+import torchvision.transforms.v2.functional as F
 from torchvision.transforms.v2 import Compose, ToDtype, Resize, Normalize
 import typing as t
 from typing import Tuple, TypeAlias, Union, Literal
@@ -19,7 +23,7 @@ class GenImageDataset(data.Dataset[t.Tuple[Tensor, Tensor] | Tensor]):
     def __init__(self,
                  path: pl.Path,
                  split: t.Literal['train', 'val', 'test'],
-                 preprocess: bool = True) -> None:
+                 normalize: bool = True) -> None:
         super(GenImageDataset, self).__init__()
 
         self.__split = split
@@ -28,9 +32,8 @@ class GenImageDataset(data.Dataset[t.Tuple[Tensor, Tensor] | Tensor]):
         self.__imag = self.__root / f'{self.__split}_images'
 
         self.__data = ps.read_csv(self.__meta)
-        self.__preprocess = preprocess
+        self.__normalize = normalize
         self.__transform = Compose([
-            ToDtype(dtype=torch.float32, scale=True),
             Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ])
 
@@ -38,8 +41,9 @@ class GenImageDataset(data.Dataset[t.Tuple[Tensor, Tensor] | Tensor]):
         image_name: str = self.__data.iloc[index].loc['Image']
         image_path: str = str(self.__imag / image_name)
         image: Tensor = tn.io.read_image(image_path, tn.io.ImageReadMode.RGB)
+        image = F.to_dtype(image, torch.float, scale=True)
 
-        if self.__preprocess:
+        if self.__normalize:
             image = self.__transform(image)
         if self.__split == 'test':
             return image
@@ -51,11 +55,66 @@ class GenImageDataset(data.Dataset[t.Tuple[Tensor, Tensor] | Tensor]):
         return len(self.__data)
 
 
-def load_data(path: pl.Path, disjoint: bool = True, preprocess: bool = True) -> t.Tuple[data.Dataset[t.Tuple[Tensor, Tensor]], data.Dataset[Tensor]] | t.Tuple[data.Dataset[t.Tuple[Tensor, Tensor]], data.Dataset[t.Tuple[Tensor, Tensor]], data.Dataset[Tensor]]:
+class GenImageAugment(nn.Module):
+    def __init__(self, *args, augment=True, normalize=True, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+
+        # Keep all operations
+        self.operations = nn.Identity() if not augment and not normalize else KA.ImageSequential()
+
+        # First apply augmentations
+        if augment:
+            self.operations.append(KA.auto.AutoAugment('imagenet'))
+            # self.operations.append(KA.RandomHorizontalFlip(p=0.5))
+            # self.operations.append(KA.RandomBrightness((0.85, 1.15), p=0.25))
+            # self.operations.append(KA.RandomGaussianBlur((3, 3), sigma=(0.15, 0.25), p=0.25))
+
+        # Then normalization
+        if normalize:
+            self.operations.append(KA.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]))
+
+    @torch.no_grad()
+    def forward(self, x: Tensor) -> Tensor:
+        return self.operations(x)
+
+
+class MaskAugment(nn.Module):
+    def __init__(self, *args, **kwargs) -> None:
+        super(MaskAugment, self).__init__()
+        self.std = 0.05
+        self.noise_p = 0.75
+        self.mask = K.augmentation.ImageSequential(
+            K.augmentation.ImageSequential(
+                K.augmentation.RandomErasing(scale=(0.05, 0.10), p=0.25),
+                K.augmentation.RandomErasing(scale=(0.05, 0.15), p=0.25),
+                K.augmentation.RandomErasing(scale=(0.05, 0.15), p=0.25),
+                K.augmentation.RandomErasing(scale=(0.05, 0.15), p=0.25),
+                K.augmentation.RandomErasing(scale=(0.05, 0.15), p=0.25),
+                K.augmentation.RandomErasing(scale=(0.05, 0.15), p=0.25),
+                K.augmentation.RandomErasing(scale=(0.05, 0.15), p=0.25),
+                K.augmentation.RandomErasing(scale=(0.05, 0.15), p=0.25),
+                same_on_batch=False,
+            ),
+            nn.Identity(),
+            random_apply=1,
+            same_on_batch=False,
+            random_apply_weights=[0.75, 0.25],
+        )
+
+    @torch.no_grad()
+    def forward(self, x: Tensor) -> Tensor:
+        if torch.bernoulli(torch.tensor(self.noise_p, device=x.device)) == 1:
+            noise = torch.sqrt(torch.tensor(self.std, device=x.device)) * torch.randn_like(x)
+            return self.mask(x + noise)
+        else:
+            return self.mask(x)
+
+
+def load_data(path: pl.Path, disjoint: bool = True, normalize: bool = True) -> t.Tuple[data.Dataset[t.Tuple[Tensor, Tensor]], data.Dataset[Tensor]] | t.Tuple[data.Dataset[t.Tuple[Tensor, Tensor]], data.Dataset[t.Tuple[Tensor, Tensor]], data.Dataset[Tensor]]:
     # Read all subsets
-    train_data = GenImageDataset(path, 'train', preprocess)
-    valid_data = GenImageDataset(path, 'val', preprocess)
-    test_data = GenImageDataset(path, 'test', preprocess)
+    train_data = GenImageDataset(path, 'train', normalize)
+    valid_data = GenImageDataset(path, 'val', normalize)
+    test_data = GenImageDataset(path, 'test', normalize)
 
     # Read all subsets
     test_data = t.cast(data.Dataset[Tensor], test_data)
@@ -71,9 +130,9 @@ def load_data(path: pl.Path, disjoint: bool = True, preprocess: bool = True) -> 
     return train_data, valid_data, test_data
 
 
-def load_batched_data(path: pl.Path, split: TrainSplit, *, seed=7982, **kwargs):
+def load_batched_data(path: pl.Path, split: TrainSplit, *, normalize=True, seed=7982, **kwargs):
     # Load disjoint subsets
-    data = load_data(path, True, True)
+    data = load_data(path, True, normalize)
     train_ds = t.cast(Dataset[Tuple[Tensor, Tensor]], data[0])
     valid_ds = t.cast(Dataset[Tuple[Tensor, Tensor]], data[1])
     test_ds = t.cast(Dataset[Tensor], t.cast(t.Any, data)[2])
