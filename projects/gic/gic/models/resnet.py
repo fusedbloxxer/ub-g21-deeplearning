@@ -32,7 +32,7 @@ class ResCNN(nn.Module):
     def __init__(self,
                  pool: t.Literal['max', 'avg'],
                  dropout1d: float = 0.4,
-                 dropout2d: float = 0.4,
+                 dropout2d: float = 0.2,
                  conv_chan: int = 32,
                  dens_chan: int = 512,
                  activ_fn: str = 'ReLU',

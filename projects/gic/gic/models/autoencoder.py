@@ -29,7 +29,6 @@ from torch.nn.functional import mse_loss
 from lightning.pytorch.utilities.types import STEP_OUTPUT, OptimizerLRScheduler
 
 from gic import *
-from gic.data import MaskAugment, GenImageAugment
 from gic.models.modules import ConvBlock, ActivFn
 
 
@@ -193,8 +192,9 @@ class AutoEncoder(tl.LightningModule):
         return self.unet(inputs)
 
     def on_train_start(self) -> None:
-        self.mask = MaskAugment()
-        self.norm = GenImageAugment(augment=False, normalize=True)
+        # self.mask = MaskAugment()
+        # self.norm = GenImageAugment(augment=False, normalize=True)
+        pass
 
     def training_step(self, b: Tensor, idx: int) -> STEP_OUTPUT:
         X_true, _ = b

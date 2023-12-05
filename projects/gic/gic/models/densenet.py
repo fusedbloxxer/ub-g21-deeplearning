@@ -116,16 +116,16 @@ class DenseDownBlock(nn.Module):
 
 class DenseCNN(nn.Module):
     def __init__(self,
-                 dense: int=0,
-                 features: int=0,
-                 factor_c: int=0,
-                 factor_t: int=0,
-                 activ_fn: t.Literal['ReLU', 'SiLU', 'GELU', 'LeakyReLU']='ReLU',
-                 pool: t.Literal['max', 'avg']='avg',
-                 repeat: int=5,
-                 inner: int=5,
-                 f_drop=0.3,
-                 c_drop=0.3,
+                 dense: int=128,
+                 features: int=24,
+                 factor_c: int=1,
+                 factor_t: int=1,
+                 activ_fn: t.Literal['ReLU', 'SiLU', 'GELU', 'LeakyReLU']='SiLU',
+                 pool: t.Literal['max', 'avg']='max',
+                 repeat: int=3,
+                 inner: int=3,
+                 f_drop=0.2,
+                 c_drop=0.1,
                  **kwargs,
                  ) -> None:
         super().__init__()

@@ -2,10 +2,8 @@ import torch.nn as nn
 import torch
 from torch import Tensor
 import typing as t
-from torch.profiler import record_function
 
 from ..tune import HyperParameterSampler
-from .autoencoder import AutoEncoder
 from .modules import ConvBlock, ActivFn, create_activ_fn
 
 

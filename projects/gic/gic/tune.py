@@ -19,8 +19,8 @@ import pathlib as pl
 from pathlib import Path
 import wandb as wn
 
-from . import wn_callback, CONST_NUM_CLASS, LOG_PATH
-from .data import GenImageAugment, TrainSplit, load_batched_data
+from . import CONST_NUM_CLASS, LOG_PATH
+from .data import GICPreprocess, TrainSplit, load_batched_data
 from .profile import TrainProfiler
 from .utils import forward_self
 
@@ -116,7 +116,6 @@ class ClassificationTrainer(Trainer):
         self.__model_factory = model
         self.loss_fn = nn.CrossEntropyLoss()
 
-    @forward_self(wn_callback.track_in_wandb())
     def __call__(self, trial: Trial) -> float:
         """Optimize hyperparams using Optuna by repeated sampling."""
         self.__hparams = self._hps.__call__(trial)
@@ -233,7 +232,6 @@ class ClassificationTrainer(Trainer):
 
     def train(self, hparams: Dict[str, Any]):
         # Initialize logging run, to ensure training goes well
-        wn.init(**wn_callback._wandb_kwargs)
         wn.config['augment'] = self._augment
         wn.log({ 'augment': self._augment })
 
