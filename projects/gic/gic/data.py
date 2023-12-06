@@ -49,6 +49,8 @@ class GICDataset(data.Dataset[t.Tuple[Tensor, Tensor] | Tensor]):
 class GICPreprocess(nn.Module):
     def __init__(self, augment=True, normalize=True, **kwargs) -> None:
         super(GICPreprocess, self).__init__()
+        self.mean = torch.tensor([0.485, 0.456, 0.406])
+        self.std = torch.tensor([0.229, 0.224, 0.225])
 
         if not augment and not normalize:
             self.__ops = nn.Identity()
@@ -58,7 +60,10 @@ class GICPreprocess(nn.Module):
         if augment:
             self.__ops.append(KA.auto.AutoAugment('cifar10'))
         if normalize:
-            self.__ops.append(KA.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]))
+            self.__ops.append(KA.Normalize(self.mean, self.std))
+
+    def denorm(self, x: Tensor) -> Tensor:
+        return K.enhance.denormalize(x, self.mean, self.std)
 
     @torch.no_grad()
     def forward(self, x: Tensor) -> Tensor:
@@ -66,11 +71,10 @@ class GICPreprocess(nn.Module):
 
 
 class GICPerturb(nn.Module):
-    def __init__(self, gen: torch.Generator, mask=True, normalize=False, noise=0.0075, p=0.75) -> None:
+    def __init__(self, mask=True, normalize=False, noise=0.0075, p=0.75) -> None:
         super(GICPerturb, self).__init__()
         self.__ops = K.augmentation.ImageSequential()
         self.__v_noise = noise
-        self.__gen = gen
         self.__p_noise = p
 
         if mask:
@@ -99,7 +103,7 @@ class GICPerturb(nn.Module):
     def noise(self, x: Tensor) -> Tensor:
         p = torch.tensor(self.__p_noise, device=x.device)
         v = torch.tensor(self.__v_noise, device=x.device)
-        s = torch.bernoulli(p, generator=self.__gen)
+        s = torch.bernoulli(p)
         if s == 1:
             return torch.sqrt(v) * torch.randn_like(x, device=x.device)
         else:
@@ -119,7 +123,8 @@ class GICDatasetModule(tl.LightningDataModule):
                  prefetch: int | None,
                  pin: bool,
                  augment: bool,
-                 gen: torch.Generator
+                 gen: torch.Generator,
+                 normalize: bool=True,
                  ) -> None:
         super().__init__()
         self.__pin = pin
@@ -129,8 +134,8 @@ class GICDatasetModule(tl.LightningDataModule):
         self.__workers = workers
         self.__batch_sz = batch_sz
         self.__prefetch = prefetch
-        self.__tr_norm = GICPreprocess(augment=False, normalize=True)
-        self.__tr_augm = GICPreprocess(augment=augment, normalize=True)
+        self.__tr_norm = GICPreprocess(augment=False, normalize=normalize)
+        self.__tr_augm = GICPreprocess(augment=augment, normalize=normalize)
 
     def setup(self, stage: str):
         self.ds = load_data(self.__path, disjoint=not self.__final)
@@ -197,7 +202,7 @@ def load_batched_data(path: pl.Path, split: TrainSplit, gen: torch.Generator, **
         pass
 
     # Create dataloaders for each subset
-    valid_dl: DataLoader[Tuple[Tensor, Tensor]] | None = DataLoader(valid_ds, shuffle=True, generator=gen, **kwargs) if valid_ds else None
     train_dl: DataLoader[Tuple[Tensor, Tensor]] = DataLoader(train_ds, shuffle=True, generator=gen, **kwargs)
+    valid_dl: DataLoader[Tuple[Tensor, Tensor]] | None = DataLoader(valid_ds, shuffle=False, generator=gen, **kwargs) if valid_ds else None
     test_dl: DataLoader[Tensor] = DataLoader(test_ds, shuffle=False, generator=gen, **kwargs)
     return train_dl, valid_dl, test_dl

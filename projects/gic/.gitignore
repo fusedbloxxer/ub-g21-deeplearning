@@ -1,5 +1,7 @@
+log/
 data/
 **/*.db
 **/*.pt
 **/wandb/
 **/lightning_logs/
+submissions/

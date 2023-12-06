@@ -18,7 +18,7 @@ profiling = False
 ROOT_PATH = pl.Path('..')
 GIT_PATH = ROOT_PATH / '..' / '..'
 DATA_PATH = ROOT_PATH / 'data'
-CKPT_PATH = DATA_PATH / 'ckpt'
+CKPT_PATH = ROOT_PATH / 'ckpt'
 LOG_PATH = ROOT_PATH / 'log'
 NOTEBOOKS_PATH = ROOT_PATH / 'notebooks'
 SUBMISSIONS_PATH = ROOT_PATH / 'submissions'
@@ -33,9 +33,9 @@ mix_float = True
 torch.backends.cudnn.benchmark = True
 torch.set_float32_matmul_precision('medium')
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-prefetch_factor = 1_000
-pin_memory= True
-num_workers= 4
+prefetch_factor = None
+pin_memory= False
+num_workers= 0
 
 # Reproducibility
 SEED = 7982
