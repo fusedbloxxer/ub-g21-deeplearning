@@ -1,7 +1,13 @@
+# Ignored top-level folders
 log/
+ckpt/
 data/
-**/*.db
-**/*.pt
+submissions/
+
+# Ignored subfolders
 **/wandb/
 **/lightning_logs/
-submissions/
+
+# Ignored filetypes
+**/*.db
+**/*.pt

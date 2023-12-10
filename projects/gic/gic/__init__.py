@@ -15,16 +15,17 @@ release = False
 profiling = False
 
 # Paths
-ROOT_PATH = pl.Path('..')
-GIT_PATH = ROOT_PATH / '..' / '..'
-DATA_PATH = ROOT_PATH / 'data'
-CKPT_PATH = ROOT_PATH / 'ckpt'
+ROOT_PATH = pl.Path('.')
 LOG_PATH = ROOT_PATH / 'log'
+CKPT_PATH = ROOT_PATH / 'ckpt'
+DATA_PATH = ROOT_PATH / 'data'
+GIT_PATH = ROOT_PATH / '..' / '..'
 NOTEBOOKS_PATH = ROOT_PATH / 'notebooks'
 SUBMISSIONS_PATH = ROOT_PATH / 'submissions'
 
 # Versioning
 git_repo = Repo(GIT_PATH)
+PROJECT_NAME = 'Generated Image Classification'
 SUBMISSION_PATH = SUBMISSIONS_PATH / f'{git_repo.active_branch.name}.csv'
 so.environ['WANDB_NOTEBOOK_NAME'] = str(NOTEBOOKS_PATH / 'main.ipynb')
 
@@ -33,18 +34,15 @@ mix_float = True
 torch.backends.cudnn.benchmark = True
 torch.set_float32_matmul_precision('medium')
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-prefetch_factor = None
-pin_memory= False
-num_workers= 0
+prefetch_factor = 1_000
+pin_memory= True
+num_workers= 4
 
 # Reproducibility
-SEED = 7982
+SEED = 8104
 rng.seed(SEED)
 ny.random.seed(SEED)
 torch.manual_seed(SEED)
 tl.seed_everything(SEED)
 gen_numpy = ny.random.default_rng(SEED)
 gen_torch = torch.Generator('cpu').manual_seed(SEED)
-
-# Constants
-CONST_NUM_CLASS = 100
