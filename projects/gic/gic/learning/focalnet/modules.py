@@ -143,6 +143,7 @@ class FocalNetArgs(t.TypedDict):
     dense: int
     dropout_dense: float
     conv_order: str
+    layers: int
 
 
 class FocalNetModule(nn.Module):
@@ -156,79 +157,64 @@ class FocalNetModule(nn.Module):
                  drop_type: str,
                  reduce: str,
                  dense: int,
+                 layers: int,
                  dropout_dense: float,
                  conv_order: str,
                  **kwargs) -> None:
         super(FocalNetModule, self).__init__()
+
+        # Typehint casts
         activ_fn = t.cast(t.Literal['SiLU', 'GELU', 'LeakyReLU', 'ReLU'], activ_fn)
         norm_layer = t.cast(t.Literal['group', 'batch', 'layer'], norm_layer)
         drop_type = t.cast(t.Literal['channel', 'spatial'], drop_type)
+
+        # Input Size
         H, W = 64, 64
-        groups = 4
 
-        self.cnn = nn.Sequential(
+        # RootLayer
+        self.input_layer = nn.Sequential(
             nn.Conv2d(3, chan, 3, 1, 1),
-            AutoActivFn(activ_fn),
-
-            AutoResidual(
-                C=chan,
-                H=H,
-                W=W,
-                groups=groups,
-                norm=norm_layer,
-                activ_fn=activ_fn,
-                dim=drop_type,
-                probability=dropout,
-                order=conv_order,
-                count=repeat),
-            AutoReduce(reduce, chan, chan * 2),
-            AutoNorm(chan * 2, H // 2, W // 2, groups, norm_layer),
-            AutoActivFn(activ_fn),
-
-            AutoResidual(
-                C=chan * 2,
-                H=H // 2,
-                W=W // 2,
-                groups=groups,
-                norm=norm_layer,
-                activ_fn=activ_fn,
-                dim=drop_type,
-                probability=dropout,
-                order=conv_order,
-                count=repeat),
-            AutoReduce(reduce, chan * 2, chan * 4),
-            AutoNorm(chan * 4, H // 4, W // 4, groups, norm_layer),
-            AutoActivFn(activ_fn),
-
-            AutoResidual(
-                C=chan * 4,
-                H=H // 4,
-                W=W // 4,
-                groups=groups,
-                norm=norm_layer,
-                activ_fn=activ_fn,
-                dim=drop_type,
-                probability=dropout,
-                order=conv_order,
-                count=repeat),
-            AutoReduce(reduce, chan * 4, chan * 8),
-            AutoNorm(chan * 8, H // 8, W // 8, groups, norm_layer),
             AutoActivFn(activ_fn),
         )
 
-        self.linear = nn.Sequential(
-            nn.AdaptiveAvgPool2d(1),
-            nn.Flatten(),
+        # ConvLayers
+        self.cnn = nn.Sequential()
+        for l in range(layers):
+            # Construct residual block
+            residual_module = nn.Sequential(
+                AutoResidual(
+                    C=chan,
+                    H=H,
+                    W=W,
+                    groups=groups,
+                    norm=norm_layer,
+                    activ_fn=activ_fn,
+                    dim=drop_type,
+                    probability=dropout,
+                    order=conv_order,
+                    count=repeat),
+                AutoReduce(reduce, chan, chan * 2),
+                AutoNorm(chan * 2, H // 2, W // 2, groups, norm_layer),
+                AutoActivFn(activ_fn),
+            )
 
-            nn.Linear(chan * 8, dense),
+            # Add module and prepare for next layer
+            self.cnn.append(residual_module)
+            H, W, chan = H // 2, W // 2, chan * 2
+
+        # MLPLayer
+        self.linear = nn.Sequential(
+            nn.AdaptiveMaxPool2d(1),
+            nn.Flatten(),
+            nn.Linear(chan, dense),
             nn.BatchNorm1d(dense),
             nn.SiLU(),
             nn.Dropout(dropout_dense),
-
             nn.Linear(dense, 100)
         )
 
     def forward(self, x: Tensor) -> Tensor:
+        x = self.input_layer(x)
         x = self.cnn(x)
         x = self.linear(x)
         return x

@@ -39,7 +39,7 @@ pin_memory= True
 num_workers= 4
 
 # Reproducibility
-SEED = 8104
+SEED = 8108
 rng.seed(SEED)
 ny.random.seed(SEED)
 torch.manual_seed(SEED)

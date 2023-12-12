@@ -10,7 +10,7 @@ from gic import *
 from gic.data.dataset import GICDataset
 from gic.data.dataloader import GICDataLoader
 from gic.learning.focalnet.factory import factory
-from gic.learning.densecnn.wrappers import DenseCNNClassifierModule
+from gic.learning.focalnet.wrappers import FocalNetClassifier
 from gic.learning.objectives import search
 
 
@@ -18,37 +18,38 @@ from gic.learning.objectives import search
 hparam_search = partial(search, factory=factory)
 pruner = opt.pruners.MedianPruner(n_startup_trials=10, n_warmup_steps=40)
 s = opt.create_study(direction='maximize', pruner=pruner)
-s.optimize(hparam_search, n_trials=100, show_progress_bar=True)
+s.optimize(hparam_search, n_trials=150, show_progress_bar=True)
 
-# Select best model
-model = DenseCNNClassifierModule(
-    activ_fn='GELU',
-    c_drop=0.2,
-    dense=512,
-    f_drop=0.3,
-    factor_c=1,
-    factor_t=1,
-    features=12,
-    inner=3,
-    num_classes=GICDataset.num_classes,
-    pool='avg',
-    repeat=3,
-    lr=0.0005391117462806324,
-    weight_decay=0.00005082016028675467,
-)
+# # Select best model
+# model = FocalNetClassifier(
+#     activ_fn='LeakyReLU',
+#     chan=56,
+#     conv_order='0 1 2',
+#     dense=256,
+#     drop_type='spatial',
+#     dropout=0.3,
+#     dropout_dense=0.4965179817068612,
+#     groups=8,
+#     lr=0.0007285659930586672,
+#     norm_layer='batch',
+#     num_classes=GICDataset.num_classes,
+#     reduce='max',
+#     repeat=2,
+#     weight_decay=0.004524643600968936
+# )
 
-# Join training & validation subsets for final submission
-loader = GICDataLoader(DATA_PATH, 32, True, 'joint')
-logger = WandbLogger(project=PROJECT_NAME, name='DenseCNN - Valid Train', save_dir=LOG_PATH)
-trainer = Trainer(max_epochs=100, enable_checkpointing=False, logger=logger)
-trainer.fit(model, datamodule=loader)
+# # Join training & validation subsets for final submission
+# loader = GICDataLoader(DATA_PATH, 32, True)
+# logger = WandbLogger(project=PROJECT_NAME, name='FocalNet - Valid', save_dir=LOG_PATH)
+# trainer = Trainer(max_epochs=130, enable_checkpointing=False, logger=logger, num_sanity_val_steps=0)
+# trainer.fit(model, datamodule=loader)
 
-# Predict on test data
-y_hat: t.List[Tensor] = t.cast(t.List[Tensor], trainer.predict(model, datamodule=loader, return_predictions=True))
-preds = torch.cat(y_hat, dim=0)
+# # Predict on test data
+# y_hat: t.List[Tensor] = t.cast(t.List[Tensor], trainer.predict(model, datamodule=loader, return_predictions=True))
+# preds = torch.cat(y_hat, dim=0)
 
-# Create submission file
-test = GICDataset(DATA_PATH, 'test')
-data = test.data_
-data['Class'] = preds
-data.to_csv(SUBMISSION_PATH, index=False)
+# # Create submission file
+# test = GICDataset(DATA_PATH, 'test')
+# data = test.data_
+# data['Class'] = preds
+# data.to_csv(SUBMISSION_PATH, index=False)

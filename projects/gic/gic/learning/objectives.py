@@ -17,17 +17,17 @@ def search(run: Run, factory: Callable[[Run, ClassifierArgs], Tuple[Dict[str, An
     # Sample Common Params
     cparams = ClassifierArgs(
         num_classes=GICDataset.num_classes,
-        lr=run.suggest_float('lr', 7e-4, 1e-3),
-        weight_decay=run.suggest_float('weight_decay', 4e-6, 8e-3),
+        lr=run.suggest_float('lr', 2e-4, 9e-4),
+        weight_decay=run.suggest_float('weight_decay', 6e-6, 8e-2),
     )
 
     # Create custom model using factory
     hparams, dnn = factory(run, cparams)
 
     # Sample Training Settings
-    batch_size = 32
-    epochs = run.suggest_int('epochs', 100, 100, step=25)
-    augment = run.suggest_categorical('augment', [False, True])
+    epochs = run.suggest_int('epochs', 70, 70, step=25)
+    augment = run.suggest_categorical('augment', [True])
+    batch_size = run.suggest_categorical('batch_size', [32])
     logger = WandbLogger(project=PROJECT_NAME, name=f'{dnn.name}/opt/{run.study.study_name}/{run.number}', save_dir=LOG_PATH)
 
     # Prepare training setup
