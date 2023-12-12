@@ -2,8 +2,6 @@ import torch.nn as nn
 from torch import Tensor
 import typing as t
 
-from ..tune import HyperParameterSampler
-
 
 class ResConvBlock(nn.Module):
     def __init__(self, in_chan: int, out_chan: int, dropout: float, activ_fn: nn.Module) -> None:
@@ -72,16 +70,11 @@ class ResCNN(nn.Module):
     def forward(self, x: Tensor) -> Tensor:
         return self.layers(x)
 
-resnet_sampler = HyperParameterSampler(lambda trial: {
-    'batch_size': trial.suggest_int('batch_size', 16, 32, step=16),
-    'optimizer': trial.suggest_categorical('optimizer', ['Adam', 'AdamW']),
-    'lr': trial.suggest_float('lr', 1e-4, 4e-3),
-    'epochs': trial.suggest_int('epochs', 60, 100),
-    'weight_decay': trial.suggest_float('weight_decay', 1e-6, 1e-3),
-    'pool': trial.suggest_categorical('pool', ['max', 'avg']),
-    'dropout1d': trial.suggest_float('dense_dropout', 0.2, 0.6),
-    'dropout2d': trial.suggest_float('conv_dropout', 0.3, 0.6),
-    'conv_chan': trial.suggest_int('conv_chan', 16, 32, step=8),
-    'dens_chan': trial.suggest_int('dens_chan', 128, 512, 128),
-    'activ_fn': trial.suggest_categorical('activ', ['ReLU', 'SiLU', 'GELU'])
-})
+
+class ResCNNArgs(t.TypedDict):
+    pool: t.Literal['max', 'avg']
+    dropout1d: float
+    dropout2d: float
+    conv_chan: int
+    dens_chan: int
+    activ_fn: str

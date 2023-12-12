@@ -10,9 +10,9 @@ from git import Repo
 import lightning as tl
 
 # Development
-debug = False
-release = False
-profiling = False
+IS_DEBUG = False
+IS_RELEASE = False
+IS_PROFILING = False
 
 # Paths
 ROOT_PATH = pl.Path('.')
@@ -26,6 +26,7 @@ SUBMISSIONS_PATH = ROOT_PATH / 'submissions'
 # Versioning
 git_repo = Repo(GIT_PATH)
 PROJECT_NAME = 'Generated Image Classification'
+SUBMISSION_NAME = git_repo.active_branch.name
 SUBMISSION_PATH = SUBMISSIONS_PATH / f'{git_repo.active_branch.name}.csv'
 so.environ['WANDB_NOTEBOOK_NAME'] = str(NOTEBOOKS_PATH / 'main.ipynb')
 

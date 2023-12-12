@@ -18,3 +18,4 @@ class FocalNetClassifier(ClassifierModule):
 
     def forward(self, x: Tensor) -> Tensor:
         return self.focalnet(x)
+

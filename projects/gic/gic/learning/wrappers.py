@@ -33,9 +33,9 @@ class ClassifierModule(ABC, tl.LightningModule):
 
         # Common classification setup
         self.name = name
-        self._lr = lr
-        self._weight_decay = weight_decay
-        self._num_classes = num_classes
+        self._lr= lr
+        self._num_classes= num_classes
+        self._weight_decay= weight_decay
         self._loss_fn = nn.CrossEntropyLoss()
         self.logger: WandbLogger
 
@@ -45,7 +45,7 @@ class ClassifierModule(ABC, tl.LightningModule):
         self._metric_valid_f1_score = MulticlassF1Score(num_classes=self._num_classes, average='macro', device=self.device)
         self._metric_valid_confm = ConfusionMatrix(device=self.device)
         self._metric_valid_loss = Mean(device=self.device)
-        self.save_hyperparameters(kwargs)
+        self.save_hyperparameters()
 
     @abstractmethod
     def forward(self, x: Tensor) -> Tensor:

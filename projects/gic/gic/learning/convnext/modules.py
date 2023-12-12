@@ -3,8 +3,50 @@ import torch
 from torch import Tensor
 import typing as t
 
-from ..tune import HyperParameterSampler
-from .modules import ConvBlock, ActivFn, create_activ_fn
+
+ActivFn = t.Literal['SiLU', 'GELU']
+
+
+def create_activ_fn(variant: ActivFn):
+    return nn.ModuleDict({
+        'SiLU': nn.SiLU(),
+        'GELU': nn.GELU(),
+    })[variant]
+
+
+class ConvBlock(nn.Module):
+    def __init__(self,
+                 C: int,
+                 H: int,
+                 W: int,
+                 hchan: int,
+                 activ_fn: ActivFn,
+                 **kwargs) -> None:
+        super(ConvBlock, self).__init__()
+        assert hchan > C, f'pointwise layer should have more channels than the input {hchan} > {C}'
+
+        # Apply multiple depthwise-convolution paths
+        self.depthwise_layer = nn.Sequential(
+            nn.Conv2d(C, C, 3, 1, 1, groups=C),
+            nn.LayerNorm([C, H, W]),
+        )
+
+        # Aggregate feature maps from all inputs
+        self.pointwise_layer = nn.Conv2d(C, hchan, 1, 1, 0)
+
+        # Leverage non-linearities to understand complex functions
+        self.activ_fn = create_activ_fn(activ_fn)
+
+        # Bottleneck the result for faster processing
+        self.bottleneck_layer = nn.Conv2d(hchan, C, 1, 1, 0)
+
+    def forward(self, x: Tensor) -> Tensor:
+        x = self.depthwise_layer(x)
+        x = self.pointwise_layer(x)
+        x = self.activ_fn(x)
+        x = self.bottleneck_layer(x)
+        return x
+
 
 
 class SpatialBlock(nn.Module):
@@ -76,7 +118,7 @@ class DenseBlock(nn.Module):
                  repeat: int,
                  module_factory: t.Callable[[], nn.Module],
                  **kwargs) -> None:
-        super(DenseBlock, self).__init__() # TODO
+        super(DenseBlock, self).__init__()
 
         # Create Inner Layers
         self.layers = nn.ModuleList([module_factory() for _ in range(repeat)])
@@ -179,19 +221,15 @@ class ConvNextNet(nn.Module):
         return x
 
 
-convnext_sampler = HyperParameterSampler(lambda trial: {
-    'epochs': 150,
-    'batch_size': 32,
-    'optimizer': 'AdamW',
-    'patch': 4,
-    'lr': trial.suggest_float('lr', 9e-5, 9e-4),
-    'weight_decay': trial.suggest_float('weight_decay', 4e-6, 1e-4),
-    'chan': trial.suggest_int('chan', 32, 96, step=32),
-    'conv_dropout': trial.suggest_float('conv_dropout', 0.2, 0.2),
-    'conv_layers': trial.suggest_int('conv_layers', 1, 3, step=1),
-    'dense_dropout': trial.suggest_float('dense_dropout', 0.1, 0.3),
-    'dense_features': trial.suggest_int('dense_features', 128, 512, step=128),
-    'dense_layers': trial.suggest_int('dense_layers', 0, 2, step=1),
-    'activ_fn': trial.suggest_categorical('activ_fn', ['SiLU', 'GELU']),
-    'patch_reduce': trial.suggest_categorical('patch_reduce', [True, False]),
-})
+class ConvNextArgs(t.TypedDict):
+    chan: int
+    patch: int
+    h: int
+    w: int
+    activ_fn: ActivFn
+    patch_reduce: bool
+    conv_dropout: float
+    conv_layers: int
+    dense_dropout: float
+    dense_features: int
+    dense_layers: int
