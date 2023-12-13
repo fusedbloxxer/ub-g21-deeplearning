@@ -61,9 +61,9 @@ class F1ScoreObjective(ScoreObjective):
         model, metric = self.model(run)
 
         # Sample Training Settings
-        epochs: int = run.suggest_int('epochs', 70, 70, step=25)
-        augment: bool = run.suggest_categorical('augment', [True])
-        batch_size: int = run.suggest_categorical('batch_size', [32])
+        epochs: int = run.suggest_int('epochs', 120, 120, step=25)
+        batch_size: int = run.suggest_categorical('batch_size', [16, 32])
+        augment: bool = run.suggest_categorical('augment', [True, False])
 
         # Prepare training setup
         pruner = PTLWrapper(run, monitor="valid_f1_score")
