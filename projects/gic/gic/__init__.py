@@ -24,10 +24,10 @@ NOTEBOOKS_PATH = ROOT_PATH / 'notebooks'
 SUBMISSIONS_PATH = ROOT_PATH / 'submissions'
 
 # Versioning
-git_repo = Repo(GIT_PATH)
+# git_repo = Repo(GIT_PATH / '..')
 PROJECT_NAME = 'Generated Image Classification'
-SUBMISSION_NAME = git_repo.active_branch.name
-SUBMISSION_PATH = SUBMISSIONS_PATH / f'{git_repo.active_branch.name}.csv'
+SUBMISSION_NAME = 'submission_17' # git_repo.active_branch.name
+SUBMISSION_PATH = SUBMISSIONS_PATH / f'{SUBMISSION_NAME}.csv'
 so.environ['WANDB_NOTEBOOK_NAME'] = str(NOTEBOOKS_PATH / 'main.ipynb')
 
 # Hardware
@@ -35,12 +35,12 @@ mix_float = True
 torch.backends.cudnn.benchmark = True
 torch.set_float32_matmul_precision('medium')
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-prefetch_factor = 1_000
+prefetch_factor = 100
 pin_memory= True
 num_workers= 4
 
 # Reproducibility
-SEED = 8108
+SEED = 10_042
 rng.seed(SEED)
 ny.random.seed(SEED)
 torch.manual_seed(SEED)

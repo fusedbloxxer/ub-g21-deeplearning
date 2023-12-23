@@ -15,20 +15,44 @@ class FocalNetObjective(F1ScoreObjective):
 
     def model(self, run: Run) -> Tuple[LightningModule, Metric[Tensor]]:
         model = FocalNetClassifier(
+            lr=4e-4,
             groups=8,
+            norm_layer='batch',
+            drop_type='spatial',
             num_classes=GICDataset.num_classes,
-            lr=run.suggest_float('lr', 4e-4, 7e-4),
-            weight_decay=run.suggest_float('weight_decay', 6e-3, 5e-2),
-            layers=run.suggest_int('layers', 3, 4, step=1),
-            chan=run.suggest_int('chan', 64, 64, 8),
-            activ_fn=run.suggest_categorical('activ_fn', ['SiLU', 'LeakyReLU']),
-            norm_layer=run.suggest_categorical('norm_layer', ['batch']),
-            repeat=run.suggest_int('repeat', 1, 2, step=1),
-            dropout=run.suggest_float('dropout', 0.15, 0.25),
-            drop_type=run.suggest_categorical('dropout_type', ['spatial']),
-            reduce=run.suggest_categorical('reduce', ['max']),
-            dense=run.suggest_categorical('dense', [256]),
-            dropout_dense=run.suggest_float('dropout_dense', 0.40, 0.45),
-            conv_order=run.suggest_categorical('conv_order', ["0 2 1", "1 0 2", "1 2 0"])
+            augment=True,
+            augment_n=1,
+            augment_m=9,
+            repeat=3,
+            dropout=0.12,
+            layers=2,
+            chan=128,
+            weight_decay=0.0016,
+            dense=256,
+            reduce="max",
+            dropout_dense=0.30,
+            activ_fn='LeakyReLU',
+            conv_order="2 1 0"
         )
         return model, model._metric_valid_f1_score
+
+
+
+            # lr=4e-4,
+            # groups=8,
+            # norm_layer='batch',
+            # drop_type='spatial',
+            # num_classes=GICDataset.num_classes,
+            # augment=True,
+            # augment_n=run.suggest_categorical('augment_n', [1, 2, 3]),
+            # augment_m=run.suggest_categorical('augment_m', [11, 5, 4, 9, 7]),
+            # repeat=run.suggest_int('repeat', 1, 4, step=1),
+            # dropout=run.suggest_float('dropout', 0.1, 0.3),
+            # layers=run.suggest_int('layers', 1, 3, step=1),
+            # chan=run.suggest_categorical('chan', [32, 64, 96, 128]),
+            # weight_decay=run.suggest_float('weight_decay', 1e-6, 6e-3),
+            # dense=run.suggest_categorical('dense', [128, 256, 384]),
+            # reduce=run.suggest_categorical('reduce', ['max', 'avg']),
+            # dropout_dense=run.suggest_float('dropout_dense', 0.2, 0.5),
+            # activ_fn=run.suggest_categorical('activ_fn', ['SiLU', 'LeakyReLU', 'GELU', 'ReLU']),
+            # conv_order=run.suggest_categorical('conv_order', ["0 1 2", "2 1 0", "0 2 1", "1 0 2", "2 0 1", "1 2 0"])

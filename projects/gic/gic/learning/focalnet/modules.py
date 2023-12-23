@@ -23,18 +23,20 @@ class AutoNormChoices(t.TypedDict):
     H: int
     W: int
     groups: int
-    norm: t.Literal['batch', 'layer', 'group']
+    norm: t.Literal['batch', 'layer', 'group', 'instn', 'none']
 
 
 def AutoNorm(C: int,
              H: int,
              W: int,
              groups: int,
-             norm: t.Literal['batch', 'layer', 'group'],
+             norm: t.Literal['batch', 'layer', 'group', 'instn', 'none'],
              **kwargs):
         return nn.ModuleDict({
+            'none': nn.Identity(),
             'batch': nn.BatchNorm2d(C),
             'layer': nn.LayerNorm([C, H, W]),
+            'instn': nn.InstanceNorm2d(C),
             'group': nn.GroupNorm(groups, C),
         })[norm]
 
@@ -173,7 +175,8 @@ class FocalNetModule(nn.Module):
 
         # RootLayer
         self.input_layer = nn.Sequential(
-            nn.Conv2d(3, chan, 3, 1, 1),
+            nn.Conv2d(3, chan, 7, 1, 3),
+            AutoNorm(chan, H, W, groups, norm_layer),
             AutoActivFn(activ_fn),
         )
 

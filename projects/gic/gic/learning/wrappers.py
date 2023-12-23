@@ -12,32 +12,50 @@ from abc import ABC, abstractmethod
 import wandb.plot as pt
 import wandb as wn
 
-
 from .metrics import ConfusionMatrix
+from ..data.transform import PreprocessTransform, RobustAugmentTransform as RATransform
 
 
 class ClassifierArgs(TypedDict):
-    weight_decay: float
-    num_classes: int
     lr: float
+    num_classes: int
+    weight_decay: float
+    augment: bool
+    augment_n: t.Optional[int]
+    augment_m: t.Optional[int]
 
 
 class ClassifierModule(ABC, tl.LightningModule):
     def __init__(self,
                  name: str,
                  lr: float,
+                 augment: bool,
                  num_classes: int,
                  weight_decay: float,
+                 augment_n: t.Optional[int],
+                 augment_m: t.Optional[int],
                  **kwargs: Any) -> None:
         super(ClassifierModule, self).__init__()
+        self.trainer: tl.Trainer
+        self.logger: WandbLogger
+
+        # Perform preprocessing
+        self.preprocess = PreprocessTransform()
+
+        # Perform augmentations
+        if augment:
+            assert augment_n is not None
+            assert augment_m is not None
+            self.augment = RATransform(rand_n=augment_n, rand_m=augment_m)
+        else:
+            self.augment = nn.Identity()
 
         # Common classification setup
-        self.name = name
         self._lr= lr
+        self.name = name
         self._num_classes= num_classes
         self._weight_decay= weight_decay
         self._loss_fn = nn.CrossEntropyLoss()
-        self.logger: WandbLogger
 
         # Common metrics analysis for classification
         self._metric_train_f1_score = MulticlassF1Score(num_classes=self._num_classes, average='macro', device=self.device)
@@ -59,10 +77,10 @@ class ClassifierModule(ABC, tl.LightningModule):
         self._metric_train_f1_score.reset()
         self._metric_train_loss.reset()
 
-    def training_step(self, b: t.Tuple[Tensor, Tensor], b_idx: t.Any) -> Tensor:
-        X, y_true = b
+    def training_step(self, b: t.Tuple[Tensor, Tensor, Tensor], b_idx: t.Any) -> Tensor:
+        X, y_blend, y_true = b
         logits: Tensor = self(X)
-        loss: Tensor = self._loss_fn(logits, y_true)
+        loss: Tensor = self._loss_fn(logits, y_blend)
         self._metric_train_loss.update(loss.detach())
         self._metric_train_f1_score.update(logits.detach(), y_true)
         return loss
@@ -101,12 +119,25 @@ class ClassifierModule(ABC, tl.LightningModule):
         return torch.argmax(self(b), dim=-1)
 
     def configure_optimizers(self) -> OptimizerLRScheduler:
-        optim = om.AdamW(self.parameters(), betas=(0.9, 0.999), lr=self._lr, weight_decay=self._weight_decay)
-        scheduler = om.lr_scheduler.ReduceLROnPlateau(optim, 'max', 0.65, 10, min_lr=5e-5, cooldown=5)
+        optim = om.AdamW(self.parameters(), lr=self._lr, weight_decay=self._weight_decay)
+        scheduler = om.lr_scheduler.StepLR(optim, 20, 0.90, verbose=True)
         return {
             'optimizer': optim,
             'lr_scheduler': {
                 'scheduler': scheduler,
-                'monitor': 'train_f1_score',
             },
         }
+
+    def on_after_batch_transfer(self, batch: Tensor | t.List[Tensor], _: int) -> Any:
+        if self.trainer.training:
+            assert isinstance(batch, list)
+            y_true = batch[1]
+            batch = self.augment(batch[0], batch[1])
+            batch = [self.preprocess(batch[0]), batch[1], y_true]
+        elif self.trainer.validating or self.trainer.sanity_checking:
+            assert isinstance(batch, list)
+            batch = [self.preprocess(batch[0]), batch[1]]
+        else:
+            assert isinstance(batch, Tensor)
+            batch = self.preprocess(batch)
+        return batch

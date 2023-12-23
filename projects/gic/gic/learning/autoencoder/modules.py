@@ -1,155 +1,148 @@
 import typing as t
+from typing import Tuple
 import torch
 import torch.nn as nn
+import pathlib as pl
 from torch import Tensor
+from collections import OrderedDict
 
 
-class ConvModule(nn.Module):
-    def __init__(self, hchan: int, h: int, w: int, p: float, **kwargs) -> None:
-        super(ConvModule, self).__init__()
-        self.dropout = nn.Dropout(p=p)
-        self.conv_layer = nn.Conv2d(hchan, hchan, 3, 1, 1)
-        self.norm_layer = nn.LayerNorm([hchan, h, w])
-        self.actv_layer = nn.SiLU()
-
-    def forward(self, x: Tensor) -> Tensor:
-        q: Tensor = self.dropout(x)
-        q = self.conv_layer(q)
-        q = self.norm_layer(q)
-        q = self.actv_layer(q)
-        return x + q
-
-
-class InputModule(nn.Module):
-    def __init__(self, ichan: int, hchan: int, h: int, w: int, p: float, **kwargs) -> None:
-        super(InputModule, self).__init__()
-        self.dropout = nn.Dropout(p=p)
-        self.conv_layer = nn.Conv2d(ichan, hchan, 3, 1, 1)
-        self.norm_layer = nn.LayerNorm([hchan, h, w])
-        self.actv_layer = nn.SiLU()
-
-    def forward(self, x: Tensor) -> Tensor:
-        x = self.dropout(x)
-        x = self.conv_layer(x)
-        x = self.norm_layer(x)
-        x = self.actv_layer(x)
-        return x
-
-
-class EncodeModule(nn.Module):
-    def __init__(self, hchan: int, ochan: int, h: int, w: int, p: float, **kwargs) -> None:
-        super(EncodeModule, self).__init__()
-        self.dropout = nn.Dropout(p=p)
-        self.pool_layer = nn.MaxPool2d((2, 2), 2)
-        self.conv_layer = nn.Conv2d(hchan, ochan, 3, 1, 1)
-        self.norm_layer = nn.LayerNorm([ochan, h // 2, w // 2])
-        self.actv_layer = nn.SiLU()
-
-    def forward(self, x: Tensor) -> Tensor:
-        x = self.dropout(x)
-        x = self.pool_layer(x)
-        x = self.conv_layer(x)
-        x = self.norm_layer(x)
-        x = self.actv_layer(x)
-        return x
-
-
-class DenoisingEncoder(nn.Module):
-    def __init__(self, ichan: int, hchan: int, h: int, w: int, layers: int, drop_input: float, drop_inside: float, **kwargs) -> None:
-        super(DenoisingEncoder, self).__init__()
-        self.in_layer = InputModule(ichan, hchan, h, w, drop_input)
+class ConvBlock(nn.Module):
+    def __init__(self,
+                 ichan: int,
+                 ochan: int,
+                 h: int,
+                 w: int,
+                 idim: t.Literal['reduce', 'expand'] | None = None,
+                 odim: t.Literal['reduce', 'expand'] | None = None,
+                 out_activ_fn: bool = True) -> None:
+        super(ConvBlock, self).__init__()
         self.layers = nn.Sequential()
-        for l in range(layers):
-            self.layers.append(ConvModule(hchan * 2**l, h // 2**l, w // 2**l, drop_inside))
-            self.layers.append(EncodeModule(hchan * 2**l, hchan * 2**(l+1), h // 2**l, w // 2**l, drop_inside))
+
+        # Input Layers
+        match idim:
+            case None:
+                pass
+            case 'reduce':
+                self.layers.append(nn.MaxPool2d(2, 2))
+            case 'expand':
+                self.layers.append(nn.UpsamplingNearest2d(scale_factor=2))
+                self.layers.append(nn.Conv2d(ichan, ichan, 3, 1, padding='same'))
+            case _:
+                raise ValueError('input dimension {} is not supported'.format(idim))
+
+        # Hidden Layers
+        self.layers.append(nn.Conv2d(ichan, ichan, 3, 1, padding='same'))
+        self.layers.append(nn.LeakyReLU())
+        self.layers.append(nn.Conv2d(ichan, ochan, 3, 1, padding='same'))
+        self.layers.append(nn.LeakyReLU() if out_activ_fn else nn.Identity())
+
+        # Output Layers
+        match odim:
+            case None:
+                pass
+            case 'reduce':
+                self.layers.append(nn.MaxPool2d(2, 2))
+            case 'expand':
+                self.layers.append(nn.UpsamplingNearest2d(scale_factor=2))
+                self.layers.append(nn.Conv2d(ochan, ochan, 3, 1, padding='same'))
+            case _:
+                raise ValueError('output dimension {} is not supported'.format(idim))
+
+        # Skip Layer
+        dim  = 0
+        dim += 1 if idim == 'expand' else -1 if idim == 'reduce' else 0
+        dim += 1 if odim == 'expand' else -1 if odim == 'reduce' else 0
+        self.skip = nn.Sequential()
+
+        # Adjust spatial dimension
+        if   dim > 0:
+            self.skip.append(nn.UpsamplingNearest2d(scale_factor=2 * dim))
+        elif dim < 0:
+            self.skip.append(nn.MaxPool2d((2, 2), -2 * dim))
+
+        # Adjust channels
+        self.skip.append(nn.Conv2d(ichan, ochan, 1, 1))
 
     def forward(self, x: Tensor) -> Tensor:
-        x = self.in_layer(x)
-        x = self.layers(x)
-        return x
+        return self.layers(x) + self.skip(x)
 
 
-class DecodeModule(nn.Module):
-    def __init__(self, hchan: int, ochan: int, h: int, w: int, p: float, **kwargs) -> None:
-        super(DecodeModule, self).__init__()
-        self.dropout = nn.Dropout(p=p)
-        self.conv_layer = nn.ConvTranspose2d(hchan, ochan, 3, 1, 1)
-        self.pool_layer = nn.Upsample(scale_factor=2)
-        self.norm_layer = nn.LayerNorm([ochan, h * 2, w * 2])
-        self.actv_layer = nn.SiLU()
+class ConvAutoEncoder(nn.Module):
+    def __init__(self, chan: int, latent: int) -> None:
+        super(ConvAutoEncoder, self).__init__()
 
-    def forward(self, x: Tensor) -> Tensor:
-        x = self.dropout(x)
-        x = self.conv_layer(x)
-        x = self.pool_layer(x)
-        x = self.norm_layer(x)
-        x = self.actv_layer(x)
-        return x
+        self.encoder = nn.Sequential(
+            ConvBlock(       3, chan * 1, 64, 64, odim='reduce'),
+            ConvBlock(chan * 1, chan * 2, 32, 32, odim='reduce'),
+            ConvBlock(chan * 2, chan * 4, 16, 16, odim='reduce'),
+            ConvBlock(chan * 4,   latent,  8,  8, odim='reduce'),
+        )
 
-
-class OutputModule(nn.Module):
-    def __init__(self, hchan: int, ochan: int, h: int, w: int, **kwargs) -> None:
-        super(OutputModule, self).__init__()
-        self.conv_layer = nn.Conv2d(hchan, ochan, 3, 1, 1)
-        self.actv_layer = nn.SiLU()
-
-    def forward(self, x: Tensor) -> Tensor:
-        x = self.conv_layer(x)
-        x = self.actv_layer(x)
-        return x
-
-
-class DenoisingDecoder(nn.Module):
-    def __init__(self, hchan: int, ochan: int, h: int, w: int, layers: int, drop_inside: float, **kwargs) -> None:
-        super(DenoisingDecoder, self).__init__()
-        self.layers = nn.Sequential()
-        for l in range(layers - 1, -1, -1):
-            self.layers.append(DecodeModule(hchan * 2**(l+1), hchan * 2**l, h // 2**(l+1), w // 2**(l+1), drop_inside))
-            self.layers.append(ConvModule(hchan * 2**l, h // 2**l, w // 2**l, drop_inside))
-        self.out_layer = OutputModule(hchan, ochan, h, w)
-
-    def forward(self, x: Tensor) -> Tensor:
-        x = self.layers(x)
-        x = self.out_layer(x)
-        return x
-
-
-class DenoisingBottleneck(nn.Module):
-    def __init__(self, ichan: int, hchan: int, ochan: int, h: int, w: int) -> None:
-        super(DenoisingBottleneck, self).__init__()
-        self.in_layer = nn.Conv2d(ichan, hchan, (h, w), (h, w), 0)
-        self.norm_layer_1 = nn.LayerNorm([hchan, 1, 1])
-        self.out_layer = nn.ConvTranspose2d(hchan, ochan, (h, w), (h, w), 0)
-        self.norm_layer_2 = nn.LayerNorm([ochan, h, w])
-        self.activ_fn = nn.SiLU()
-
-    def forward(self, x: Tensor) -> t.Tuple[Tensor, Tensor]:
-        x = self.in_layer(x)
-        x = self.norm_layer_1(x)
-        l = x = self.activ_fn(x)
-        x = self.out_layer(x)
-        x = self.norm_layer_2(x)
-        x = self.activ_fn(x)
-        return x, l
-
-
-class DenoisingAutoEncoder(nn.Module):
-    def __init__(self, ichan: int, hchan: int, ochan: int, lowdim: int, h: int, w: int, layers: int, drop_input: float, drop_inside: float, **kwargs) -> None:
-        super(DenoisingAutoEncoder, self).__init__()
-        assert ichan == ochan, 'the input and output number of channels must match'
-        assert layers % 2 == 0 and layers >= 0, 'the number of layers must be evenly distributed'
-        layers = layers // 2
-        self.encoder = DenoisingEncoder(ichan, hchan, h, w, layers, drop_input, drop_inside)
-        self.bottleneck = DenoisingBottleneck(hchan * 2**layers, lowdim, hchan * 2**layers, h // 2**layers, w // 2**layers)
-        self.decoder = DenoisingDecoder(hchan, ochan, h, w, layers, drop_inside)
+        self.decoder = nn.Sequential(
+            ConvBlock(  latent, chan * 4,  8,  8, idim='expand'),
+            ConvBlock(chan * 4, chan * 2, 16, 16, idim='expand'),
+            ConvBlock(chan * 2, chan * 1, 32, 32, idim='expand'),
+            ConvBlock(chan * 1,        3, 64, 64, idim='expand', out_activ_fn=False),
+            nn.Sigmoid(),
+        )
 
     def encode(self, x: Tensor) -> Tensor:
         x = self.encoder(x)
-        x = self.bottleneck(x)[1]
+        return x
+
+    def decode(self, x: Tensor) -> Tensor:
+        x = self.decoder(x)
         return x
 
     def forward(self, x: Tensor) -> Tensor:
-        x = self.encoder(x)
-        x = self.bottleneck(x)[0]
-        x = self.decoder(x)
+        x = self.encode(x)
+        x = self.decode(x)
+        return x
+
+
+class DAEClassifierArgs(t.TypedDict):
+    ckpt_path: pl.Path
+    dense: int
+    activ_fn: str
+    dropout: float | None
+    batch: str | None
+
+
+class DAEClassifier(nn.Module):
+    def __init__(self,
+                 ckpt_path: pl.Path,
+                 dense: int,
+                 activ_fn: str,
+                 dropout: float | None=None,
+                 batch: str | None=None,
+                 **kwargs) -> None:
+        super(DAEClassifier, self).__init__()
+
+        # Use pretrained denoising autoencoder
+        self.autoencoder = ConvAutoEncoder(64, 64)
+        self.autoencoder.load_state_dict(OrderedDict(list(map(lambda x: (x[0].replace('autoencoder.', ''), x[1]), torch.load(str(ckpt_path / 'dae.pt')).items()))))
+
+        # Choose an activation
+        activ = nn.ModuleDict({ 'silu': nn.SiLU(), 'leak': nn.LeakyReLU() })[activ_fn]
+
+        # Train a classifier on top
+        self.classifier = nn.Sequential(
+            nn.AdaptiveMaxPool2d(1),
+            nn.Flatten(),
+            nn.Dropout(dropout) if dropout else nn.Identity(),
+            nn.Linear(64, dense),
+            nn.BatchNorm1d(dense) if batch else nn.Identity(),
+            activ,
+            nn.Dropout(dropout) if dropout else nn.Identity(),
+            nn.Linear(dense, dense),
+            nn.BatchNorm1d(dense) if batch else nn.Identity(),
+            activ,
+            nn.Dropout(dropout) if dropout else nn.Identity(),
+            nn.Linear(dense, 100),
+        )
+
+    def forward(self, x: Tensor) -> Tensor:
+        x = self.autoencoder.encode(x)
+        x = self.classifier.forward(x)
         return x

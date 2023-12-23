@@ -29,6 +29,8 @@ lightning = "^2.1.2"
 exceptiongroup = "^1.2.0"
 ipykernel = "^6.27.1"
 cleanvision = "^0.3.5"
+ipywidgets = "^8.1.1"
+rich = "^13.7.0"
 
 [build-system]
 requires = ["poetry-core"]

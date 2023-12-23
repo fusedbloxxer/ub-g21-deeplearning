@@ -1,58 +1,56 @@
-import os as so
 import sys as s
-import pathlib as pl
+import torch
 from torch import Tensor
-from functools import partial
 from lightning import Trainer
 from lightning.pytorch.loggers import WandbLogger
 
 from gic import *
 from gic.data.dataset import GICDataset
-from gic.data.dataloader import GICDataLoader
-from gic.learning.focalnet.wrappers import FocalNetClassifier
-from gic.learning.rescnn.objectives import ResCNNObjective
+from gic.data.dataloader import GICDataModule
 from gic.learning.focalnet.objectives import FocalNetObjective
-from gic.learning.densecnn.objectives import DenseCNNObjective
-from gic.learning.convnext.objectives import ConvNextObjective
+from gic.learning.focalnet.wrappers import FocalNetClassifier
 
 
-# Perform HyperParam Search
-pruner = opt.pruners.MedianPruner(n_startup_trials=15, n_warmup_steps=40)
-s = opt.create_study(direction='maximize', pruner=pruner)
-s.optimize(FocalNetObjective(), n_trials=150, show_progress_bar=True)
+# # Find hyperparams that maximize the validation f1 score
+# sampler = opt.samplers.TPESampler(n_startup_trials=10)
+# s = opt.create_study(direction='maximize', sampler=sampler)
+# s.optimize(FocalNetObjective(), n_trials=250, show_progress_bar=True)
 
-# # # Select best model
-# model = FocalNetClassifier(
-#     activ_fn='LeakyReLU',
-#     layers=1,
-#     chan=56,
-#     conv_order='0 1 2',
-#     dense=256,
-#     drop_type='spatial',
-#     dropout=0.3,
-#     dropout_dense=0.4965179817068612,
-#     groups=8,
-#     lr=0.0007285659930586672,
-#     norm_layer='batch',
-#     num_classes=GICDataset.num_classes,
-#     reduce='max',
-#     repeat=2,
-#     weight_decay=0.004524643600968936
-# )
+# Select best model
+model = FocalNetClassifier(
+    lr=4e-4,
+    groups=8,
+    norm_layer='batch',
+    drop_type='spatial',
+    num_classes=GICDataset.num_classes,
+    augment=True,
+    augment_n=1,
+    augment_m=9,
+    repeat=3,
+    dropout=0.12,
+    layers=2,
+    chan=128,
+    weight_decay=0.0016,
+    dense=256,
+    reduce="max",
+    dropout_dense=0.30,
+    activ_fn='LeakyReLU',
+    conv_order="2 1 0"
+)
 
-# # # Join training & validation subsets for final submission
-# loader = GICDataLoader(DATA_PATH, 32, True)
-# logger = WandbLogger(project=PROJECT_NAME, name='FocalNet - Valid', save_dir=LOG_PATH)
-# trainer = Trainer(max_epochs=1, enable_checkpointing=False, logger=logger)
-# trainer.fit(model, datamodule=loader)
-# trainer.validate(model, datamodule=loader)
+# Join training & validation subsets for final submission
+loader = GICDataModule(DATA_PATH, 32, 'joint')
+logger = WandbLogger(project=PROJECT_NAME, name='FocalNet - Valid', save_dir=LOG_PATH)
+trainer = Trainer(max_epochs=156, enable_checkpointing=False, num_sanity_val_steps=0, limit_val_batches=0, logger=logger)
+trainer.fit(model, datamodule=loader)
+trainer.validate(model, datamodule=loader)
 
-# # Predict on test data
-# y_hat: t.List[Tensor] = t.cast(t.List[Tensor], trainer.predict(model, datamodule=loader, return_predictions=True))
-# preds = torch.cat(y_hat, dim=0)
+# Predict on test data
+y_hat: t.List[Tensor] = t.cast(t.List[Tensor], trainer.predict(model, datamodule=loader, return_predictions=True))
+preds = torch.cat(y_hat, dim=0)
 
-# # Create submission file
-# test = GICDataset(DATA_PATH, 'test')
-# data = test.data_
-# data['Class'] = preds
-# data.to_csv(SUBMISSION_PATH, index=False)
+# Create submission file
+test = GICDataset(DATA_PATH, 'test')
+data = test.data_
+data['Class'] = preds
+data.to_csv(SUBMISSION_PATH, index=False)

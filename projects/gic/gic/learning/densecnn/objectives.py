@@ -18,6 +18,9 @@ class DenseCNNObjective(F1ScoreObjective):
         model = DenseCNNClassifierModule(
             num_classes=GICDataset.num_classes,
             lr=run.suggest_float('lr', 2e-4, 9e-4),
+            augment=True,
+            augment_n=run.suggest_categorical('augment_n', [1, 2, 3]),
+            augment_m=run.suggest_categorical('augment_m', [11, 5, 4, 9, 7]),
             weight_decay=run.suggest_float('weight_decay', 6e-6, 8e-2),
             dense=run.suggest_int('dense', 128, 256, step=128),
             features=run.suggest_int('features', 12, 16, step=4),
