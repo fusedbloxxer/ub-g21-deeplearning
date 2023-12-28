@@ -13,9 +13,11 @@ class FocalNetClassifierArgs(ClassifierArgs, FocalNetArgs):
 
 class FocalNetClassifier(ClassifierModule):
     def __init__(self, **kwargs: t.Unpack[FocalNetClassifierArgs]) -> None:
-        super(FocalNetClassifier, self).__init__(name='FocalNet', **kwargs)
+        if 'name' in kwargs:
+            super(FocalNetClassifier, self).__init__(**kwargs)
+        else:
+            super(FocalNetClassifier, self).__init__(name='FocalNet', **kwargs)
         self.focalnet = FocalNetModule(**kwargs)
 
     def forward(self, x: Tensor) -> Tensor:
         return self.focalnet(x)
-

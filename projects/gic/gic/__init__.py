@@ -6,7 +6,6 @@ import pathlib as pl
 import optuna as opt
 import typing as t
 from optuna.integration import WeightsAndBiasesCallback
-from git import Repo
 import lightning as tl
 
 # Development
@@ -24,9 +23,8 @@ NOTEBOOKS_PATH = ROOT_PATH / 'notebooks'
 SUBMISSIONS_PATH = ROOT_PATH / 'submissions'
 
 # Versioning
-# git_repo = Repo(GIT_PATH / '..')
 PROJECT_NAME = 'Generated Image Classification'
-SUBMISSION_NAME = 'submission_17' # git_repo.active_branch.name
+SUBMISSION_NAME = 'submission_31'
 SUBMISSION_PATH = SUBMISSIONS_PATH / f'{SUBMISSION_NAME}.csv'
 so.environ['WANDB_NOTEBOOK_NAME'] = str(NOTEBOOKS_PATH / 'main.ipynb')
 
@@ -40,7 +38,7 @@ pin_memory= True
 num_workers= 4
 
 # Reproducibility
-SEED = 10_042
+SEED = 10_052
 rng.seed(SEED)
 ny.random.seed(SEED)
 torch.manual_seed(SEED)

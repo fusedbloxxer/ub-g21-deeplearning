@@ -17,25 +17,24 @@ class FocalNetObjective(F1ScoreObjective):
         model = FocalNetClassifier(
             lr=4e-4,
             groups=8,
+            augment=True,
+            reduce='max',
+            conv_order="2 1 0",
             norm_layer='batch',
             drop_type='spatial',
             num_classes=GICDataset.num_classes,
-            augment=True,
-            augment_n=1,
-            augment_m=9,
-            repeat=3,
-            dropout=0.12,
-            layers=2,
-            chan=128,
-            weight_decay=0.0016,
-            dense=256,
-            reduce="max",
-            dropout_dense=0.30,
-            activ_fn='LeakyReLU',
-            conv_order="2 1 0"
+            augment_n=run.suggest_int('augment_n', 1, 2),
+            augment_m=run.suggest_int('augment_m', 5, 11, step=2),
+            repeat=run.suggest_categorical('repeat', [2, 3, 4]),
+            dropout=run.suggest_float('dropout', 0.12, 0.2),
+            layers=run.suggest_int('layers', 2, 3),
+            chan=run.suggest_int('chan', 32, 128, step=32),
+            weight_decay=run.suggest_float('weight_decay', 1e-3, 1e-2),
+            dense=run.suggest_int('dense', 224, 256, step=32),
+            dropout_dense=run.suggest_float('dropout_dense', 0.25, 0.40),
+            activ_fn=run.suggest_categorical('activ_fn', ['LeakyReLU', 'SiLU']),
         )
         return model, model._metric_valid_f1_score
-
 
 
             # lr=4e-4,
