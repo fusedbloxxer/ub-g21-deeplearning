@@ -24,7 +24,7 @@ SUBMISSIONS_PATH = ROOT_PATH / 'submissions'
 
 # Versioning
 PROJECT_NAME = 'Generated Image Classification'
-SUBMISSION_NAME = 'submission_31'
+SUBMISSION_NAME = 'submission_38'
 SUBMISSION_PATH = SUBMISSIONS_PATH / f'{SUBMISSION_NAME}.csv'
 so.environ['WANDB_NOTEBOOK_NAME'] = str(NOTEBOOKS_PATH / 'main.ipynb')
 
