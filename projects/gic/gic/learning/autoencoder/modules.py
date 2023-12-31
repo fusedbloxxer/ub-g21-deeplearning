@@ -130,7 +130,6 @@ class DAEClassifier(nn.Module):
         self.classifier = nn.Sequential(
             nn.AdaptiveMaxPool2d(1),
             nn.Flatten(),
-            nn.Dropout(dropout) if dropout else nn.Identity(),
             nn.Linear(64, dense),
             nn.BatchNorm1d(dense) if batch else nn.Identity(),
             activ,
@@ -138,7 +137,6 @@ class DAEClassifier(nn.Module):
             nn.Linear(dense, dense),
             nn.BatchNorm1d(dense) if batch else nn.Identity(),
             activ,
-            nn.Dropout(dropout) if dropout else nn.Identity(),
             nn.Linear(dense, 100),
         )
 

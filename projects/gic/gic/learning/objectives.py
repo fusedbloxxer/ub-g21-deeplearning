@@ -1,18 +1,15 @@
 import typing as t
-from typing import Any, Callable, Dict, Tuple, cast
 import optuna as opt
 from optuna.trial import Trial as Run
 import lightning as tl
 from lightning import Trainer
 from lightning.pytorch.loggers import WandbLogger
-from lightning.pytorch.callbacks import EarlyStopping
 from torch import Tensor
 from torcheval.metrics import Metric
 import wandb as wn
 from abc import ABC, abstractmethod
 import random as rng
 
-from ..utils import PTLWrapper
 from ..data.dataset import GICDataset
 from ..data.dataloader import GICDataModule
 from .. import DATA_PATH, PROJECT_NAME, LOG_PATH, IS_RELEASE, SUBMISSION_NAME
@@ -64,12 +61,10 @@ class F1ScoreObjective(ScoreObjective):
 
         # Sample Training Settings
         batch_size: int = 32
-        epochs: int = 132
+        epochs: int = 60
 
         # Prepare training setup
         loader = GICDataModule(DATA_PATH, batch_size)
-        # pruner = PTLWrapper(run, monitor="valid_f1_score")
-        # early = EarlyStopping(monitor='valid_f1_score', min_delta=0.005, patience=15, mode='max')
         trainer = Trainer(max_epochs=epochs, enable_checkpointing=False, logger=self._logger)
 
         # Keep track of the best hyperparams

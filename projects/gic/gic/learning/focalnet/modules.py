@@ -182,7 +182,7 @@ class FocalNetModule(nn.Module):
 
         # ConvLayers
         self.cnn = nn.Sequential()
-        for l in range(layers):
+        for _ in range(layers):
             # Construct residual block
             residual_module = nn.Sequential(
                 AutoResidual(

@@ -17,16 +17,16 @@ class DAEClasifierObjective(F1ScoreObjective):
 
     def model(self, run: Run) -> Tuple[LightningModule, Metric[Tensor]]:
         model = DAEClasifierModule(
+            lr=6e-4,
+            batch='batch',
             ckpt_path=CKPT_PATH,
             num_classes=GICDataset.num_classes,
-            lr=run.suggest_float('lr', 5e-5, 2e-3),
-            dropout=run.suggest_float('dropout', 0.25, 0.6),
+            dropout=run.suggest_float('dropout', 0.25, 0.40),
             augment=True,
             augment_n=run.suggest_categorical('augment_n', [1, 2, 3]),
             augment_m=run.suggest_categorical('augment_m', [11, 5, 4, 9, 7]),
-            weight_decay=run.suggest_float('weight_decay', 6e-4, 3e-2),
+            weight_decay=run.suggest_float('weight_decay', 6e-4, 3e-3),
             activ_fn=run.suggest_categorical('activ_fn', ['silu', 'leak']),
-            dense=run.suggest_categorical('dense', [64, 128, 256]),
-            batch=cast(Any, run.suggest_categorical('batch', ['batch', None])),
+            dense=run.suggest_categorical('dense', [224, 256]),
         )
         return model, model._metric_valid_f1_score

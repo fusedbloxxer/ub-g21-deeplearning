@@ -1,5 +1,5 @@
 import typing as t
-from typing import Any, Dict, Generic, TypeVar, TypeAlias, Type, Tuple, cast
+from typing import Any, Dict, Generic, TypeVar, Type, Tuple, cast
 from functools import partial
 import torch
 from torch import Tensor, inference_mode
@@ -13,9 +13,9 @@ from datetime import datetime as dt
 import wandb as wn
 
 from .. import CKPT_PATH, PROJECT_NAME, LOG_PATH, DEVICE
-from ..data.dataset import GICDataset
-from .wrappers import ClassifierModule, ClassifierArgs
 from .focalnet.wrappers import FocalNetClassifier, FocalNetClassifierArgs
+from .wrappers import ClassifierModule, ClassifierArgs
+from ..data.dataset import GICDataset
 
 
 Model = TypeVar('Model', bound=ClassifierModule, covariant=True)
