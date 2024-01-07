@@ -7,20 +7,20 @@ import pathlib as pl
 from collections import OrderedDict
 from lightning.pytorch.utilities.types import OptimizerLRScheduler
 from lightning.pytorch.loggers import WandbLogger
+from lightning.pytorch import LightningDataModule
 import torch.optim as om
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from torcheval.metrics import Mean
 import lightning as tl
 from optuna.trial import Trial as Run
-from lightning.pytorch.loggers import WandbLogger
+from lightning.pytorch.loggers import WandbLogger as Logger
 from lightning.pytorch import LightningModule
 from torch import Tensor
 from torcheval.metrics import Metric
+from functools import partial
 
-from . import CKPT_PATH
 from .model_base import F1ScoreObjective
 from .model_base import ClassifierArgs, ClassifierModule
-from .model_dae import ConvAutoEncoder, DAEClassifier, DAEClassifierArgs
 from .data_transform import PreprocessTransform, MaskingNoiseTransform, AugmentTransform
 from .data_dataset import GICDataset
 
@@ -172,13 +172,13 @@ class DAEClassifier(nn.Module):
 
 
 ############ Classification Module ############
-class DAEClasifierModuleArgs(ClassifierArgs, DAEClassifierArgs):
+class DAEClasifierArgs(ClassifierArgs, DAEClassifierArgs):
     pass
 
 
-class DAEClasifierModule(ClassifierModule):
-    def __init__(self, **kwargs: t.Unpack[DAEClasifierModuleArgs]) -> None:
-        super(DAEClasifierModule, self).__init__(name='DAEClassifier', **kwargs)
+class DAEClasifier(ClassifierModule):
+    def __init__(self, **kwargs: t.Unpack[DAEClasifierArgs]) -> None:
+        super(DAEClasifier, self).__init__(name=t.cast(t.Any, kwargs.pop(t.cast(t.Any, 'name'), 'DAEClassifier')), **kwargs)
         self.dae_classifier = DAEClassifier(**kwargs)
 
     def forward(self, x: Tensor) -> Tensor:
@@ -280,14 +280,20 @@ class DAEModule(tl.LightningModule):
 
 ############ Objective ############
 class DAEClasifierObjective(F1ScoreObjective):
-    def __init__(self):
-        super(DAEClasifierObjective, self).__init__('DAEClassifier')
+    def __init__(self,
+                 batch_size: int,
+                 epochs: int,
+                 data_module: t.Callable[[], LightningDataModule],
+                 logger_fn: partial[Logger],
+                 ckpt_path: pl.Path):
+        super(DAEClasifierObjective, self).__init__('DAEClassifier', batch_size, epochs, data_module, logger_fn)
+        self.ckpt_path = ckpt_path
 
     def model(self, run: Run) -> Tuple[LightningModule, Metric[Tensor]]:
-        model = DAEClasifierModule(
+        model = DAEClasifier(
             lr=6e-4,
             batch='batch',
-            ckpt_path=CKPT_PATH,
+            ckpt_path=self.ckpt_path,
             num_classes=GICDataset.num_classes,
             dropout=run.suggest_float('dropout', 0.25, 0.40),
             augment=True,

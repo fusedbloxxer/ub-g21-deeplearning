@@ -1,20 +1,22 @@
 import typing as t
 from typing import Any, TypedDict
 from lightning.pytorch.utilities.types import OptimizerLRScheduler
-from lightning.pytorch.loggers import WandbLogger
+from lightning.pytorch.loggers import WandbLogger as Logger
+from lightning.pytorch import LightningDataModule
+from lightning import Trainer
+import lightning as tl
 import torch
 import torch.nn as nn
 from torch import Tensor
 import torch.optim as om
 from torcheval.metrics import Mean, MulticlassF1Score
-import lightning as tl
+from torcheval.metrics import Metric
 from abc import ABC, abstractmethod
 from optuna.trial import Trial as Run
-from lightning import Trainer
-from lightning.pytorch.loggers import WandbLogger
-from torcheval.metrics import Metric
+import pathlib as pl
+from functools import partial
 
-from . import DATA_PATH, wn_logger_fn
+from .setup import Config
 from .train_metrics import ConfusionMatrix
 from .data_dataloader import GICDataModule
 from .data_transform import PreprocessTransform, RobustAugmentTransform as RATransform
@@ -42,7 +44,7 @@ class ClassifierModule(ABC, tl.LightningModule):
                  **kwargs: Any) -> None:
         super(ClassifierModule, self).__init__()
         self.trainer: tl.Trainer
-        self.logger: WandbLogger
+        self.logger: Logger
 
         # Perform preprocessing
         self.preprocess = PreprocessTransform()
@@ -150,13 +152,29 @@ class ClassifierModule(ABC, tl.LightningModule):
 
 ############ Base Objective ############
 class ScoreObjective(ABC):
-    def __init__(self, model_name: str, **kwargs) -> None:
+    def __init__(self,
+                 model_name: str,
+                 batch_size: int,
+                 epochs: int,
+                 data_module: t.Callable[[], LightningDataModule],
+                 logger_fn: partial[Logger]) -> None:
         super(ScoreObjective, self).__init__()
-        self._logger: WandbLogger
+
+        # Data
+        self._data_fn = data_module
+
+        # Model info
         self._model_name = model_name
+        self._batch_size = batch_size
+        self._epochs = epochs
+
+        # Logging setup
+        self._logger: Logger
+        self.__logger_fn = logger_fn
         self._name_format = r'{model_name}/optimize/{study_name}/{run_name}'
 
     def __call__(self, run: Run) -> t.Any:
+        # Sample a model, train it over the data and log the progress
         self.__log_init(run)
         score: t.Any = self.search(run)
         self.__log_finish()
@@ -164,41 +182,51 @@ class ScoreObjective(ABC):
 
     @abstractmethod
     def search(self, run: Run) -> t.Any:
+        # Sample a model, train it over the data and evaluate it at the end
         raise NotImplementedError()
 
     @abstractmethod
     def model(self, run: Run) -> t.Tuple[tl.LightningModule, Metric[Tensor]]:
+        # Samples hiperparameters from the defined space and returns a model and a metric callback
         raise NotImplementedError()
 
     def __log_init(self, run: Run):
+        # Initialize the logger for the current run
         run_name = self._name_format.format(model_name=self._model_name,
-                                                  study_name=run.study.study_name,
-                                                  run_name=run.number)
-        self._logger = wn_logger_fn(name=run_name)
+                                                 study_name=run.study.study_name,
+                                                 run_name=run.number)
+        self._logger = self.__logger_fn(name=run_name)
 
     def __log_finish(self) -> None:
+        # End the current run before starting another one
         self._logger.experiment.finish()
 
 
 class F1ScoreObjective(ScoreObjective):
-    def __init__(self, model_name: str, **kwargs) -> None:
-        super(F1ScoreObjective, self).__init__(model_name, **kwargs)
+    def __init__(self,
+                 model_name: str,
+                 batch_size: int,
+                 epochs: int,
+                 data_module: t.Callable[[], LightningDataModule],
+                 logger_fn: partial[Logger]) -> None:
+        super(F1ScoreObjective, self).__init__(model_name, batch_size, epochs, data_module, logger_fn)
 
     def search(self, run: Run) -> float:
         # Create custom model using factory
         model, metric = self.model(run)
 
-        # Sample Training Settings
-        batch_size: int = 32
-        epochs: int = 250
-
         # Prepare training setup
-        loader = GICDataModule(DATA_PATH, batch_size)
-        trainer = Trainer(max_epochs=epochs, enable_checkpointing=False, logger=self._logger)
+        trainer = Trainer(max_epochs=self._epochs, enable_checkpointing=False, logger=self._logger)
 
         # Keep track of the best hyperparams
-        self._logger.log_hyperparams(params={ **model.hparams, 'epochs': epochs, 'batch_size': batch_size })
+        self._logger.log_hyperparams(params={
+            **model.hparams,
+            'epochs': self._epochs,
+            'batch_size': self._batch_size
+        })
 
-        # Perform training
-        trainer.fit(model, datamodule=loader)
+        # Train the model
+        trainer.fit(model, datamodule=self._data_fn())
+
+        # Evaluate its performance and update the study
         return metric.compute().item()

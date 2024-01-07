@@ -5,9 +5,12 @@ import torch.nn as nn
 from torch import Tensor
 import torch.optim as om
 from lightning.pytorch import LightningModule
+from lightning.pytorch import LightningDataModule
+from lightning.pytorch.loggers import WandbLogger as Logger
 from lightning.pytorch.utilities.types import OptimizerLRScheduler
 from optuna.trial import Trial as Run
 from torcheval.metrics import Metric
+from functools import partial
 
 from .data_dataset import GICDataset
 from .model_base import F1ScoreObjective
@@ -199,8 +202,9 @@ class DenseCNNClassifierArgs(ClassifierArgs, DenseCNNArgs):
 
 class DenseCNNClassifier(ClassifierModule):
     def __init__(self, **kwargs: Unpack[DenseCNNClassifierArgs]):
-        super(DenseCNNClassifier, self).__init__(name='DenseCNN', **kwargs)
+        super(DenseCNNClassifier, self).__init__(name=t.cast(t.Any, kwargs.pop(t.cast(t.Any, 'name'), 'DenseCNN')), **kwargs)
         self.net_densecnn = DenseCNN(**kwargs)
+        
 
     def forward(self, x: Tensor) -> Tensor:
         return self.net_densecnn(x)
@@ -218,8 +222,12 @@ class DenseCNNClassifier(ClassifierModule):
 
 ############ Objective ############
 class DenseCNNObjective(F1ScoreObjective):
-    def __init__(self) -> None:
-        super(DenseCNNObjective, self).__init__('DenseCNN')
+    def __init__(self,
+                 batch_size: int,
+                 epochs: int,
+                 data_module: t.Callable[[], LightningDataModule],
+                 logger_fn: partial[Logger]) -> None:
+        super(DenseCNNObjective, self).__init__('DenseCNN', batch_size, epochs, data_module, logger_fn)
 
     def model(self, run: Run) -> t.Tuple[LightningModule, Metric[Tensor]]:
         model = DenseCNNClassifier(

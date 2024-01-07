@@ -8,12 +8,11 @@ from torch.utils.data import DataLoader
 from lightning.pytorch.trainer import Trainer
 from lightning.pytorch.callbacks import ModelCheckpoint as ModelCkpt
 from lightning import LightningDataModule as DataModule
+from lightning.pytorch.loggers import WandbLogger as Logger
 from datetime import datetime as dt
 import wandb as wn
+import pathlib as pl
 
-from . import CKPT_PATH, PROJECT_NAME, LOG_PATH, DEVICE, wn_logger_fn
-from .model_densecnn import DenseCNNClassifier, DenseCNNClassifierArgs
-from .model_rescnn import ResCNNClassifier, ResCNNClassifierArgs
 from .model_base import ClassifierModule, ClassifierArgs
 from .data_dataset import GICDataset
 
@@ -23,7 +22,15 @@ Params = TypeVar('Params', bound=ClassifierArgs)
 
 
 class BaggingEnsemble(Generic[Model, Params]):
-    def __init__(self, model_type: Type[Model], n_models: int, args: Params):
+    def __init__(self,
+                 model_type: Type[Model],
+                 n_models: int,
+                 args: Params,
+                 ckpt_path: pl.Path,
+                 log_path: pl.Path,
+                 device: torch.device,
+                 project_name: str,
+                 logger_fn: partial[Logger]):
         super(BaggingEnsemble, self).__init__()
         assert n_models > 1, 'at least two models may be specified'
 
@@ -31,12 +38,16 @@ class BaggingEnsemble(Generic[Model, Params]):
         self.models = [model_type(**cast(Dict[str, Any], args)) for _ in range(n_models)]
         self.model_name = self.models[-1].name
         self.model_type = model_type
-        self.ckpt_save_dir = CKPT_PATH / 'ensemble' / self.model_name
+        self.ckpt_save_dir = ckpt_path / 'ensemble' / self.model_name
+        self.device = device
+        self.log_path = log_path
+        self.logger_fn = logger_fn
+        self.project_name = project_name
 
     def fit(self, epochs: int, data: DataModule, validate: bool=False) -> None:
         start_time = dt.now().strftime(r'%d_%b_%Y_%H:%M')
         for i in range(len(self)):
-            run_logger = wn_logger_fn(
+            run_logger = self.logger_fn(
                 name=f"Ensemble_{self.model_name}_{i + 1}_{len(self)}_Train_{start_time}"
             )
             model_ckpt = ModelCkpt(
@@ -70,8 +81,8 @@ class BaggingEnsemble(Generic[Model, Params]):
         y_true: Tensor = torch.cat(list(map(lambda x: x[1], iter(valid_dl))), dim=0)
         wn.init(
             name=f"Ensemble_{self.model_name}_Valid_{start_time}",
-            project=PROJECT_NAME,
-            dir=LOG_PATH,
+            project=self.project_name,
+            dir=self.log_path,
         )
         for epoch in range(epochs):
             self.load_ensemble(epoch, version)
@@ -95,9 +106,9 @@ class BaggingEnsemble(Generic[Model, Params]):
         y_pred = []
         for batch in pred_dl:
             if   mode == 'valid':
-                X: Tensor = batch[0].to(DEVICE)
+                X: Tensor = batch[0].to(self.device)
             elif mode == 'test':
-                X: Tensor = batch.to(DEVICE)
+                X: Tensor = batch.to(self.device)
             else:
                 raise Exception(f'invalid predict mode: {mode}')
             X = self.models[0].preprocess(X)
@@ -105,7 +116,7 @@ class BaggingEnsemble(Generic[Model, Params]):
             # Obtain outputs from members
             e_pred = []
             for i in range(len(self)):
-                self.models[i] = self.models[i].to(DEVICE)
+                self.models[i] = self.models[i].to(self.device)
                 with inference_mode(True):
                     e_pred.append(self.models[i].forward(X).cpu())
                 self.models[i] = self.models[i].to('cpu')
@@ -118,7 +129,3 @@ class BaggingEnsemble(Generic[Model, Params]):
 
     def __len__(self) -> int:
         return len(self.models)
-
-
-ResCNNEnsemble = partial(BaggingEnsemble[ResCNNClassifier, ResCNNClassifierArgs], ResCNNClassifier)
-DenseCNNEnsemble = partial(BaggingEnsemble[DenseCNNClassifier, DenseCNNClassifierArgs], DenseCNNClassifier)

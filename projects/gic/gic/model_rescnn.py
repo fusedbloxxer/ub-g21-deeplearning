@@ -4,6 +4,8 @@ import torch.nn as nn
 from torch import Tensor
 from functools import partial
 from lightning.pytorch import LightningModule
+from lightning.pytorch import LightningDataModule
+from lightning.pytorch.loggers import WandbLogger as Logger
 from optuna.trial import Trial as Run
 from torcheval.metrics import Metric
 
@@ -82,10 +84,10 @@ def AutoRepeat(factory: t.Callable[[], nn.Module], count: int):
     return nn.Sequential(*[factory() for _ in range(count)])
 
 
-def AutoSkip(layern_fn: t.Callable[[], nn.Module],
+def AutoSkip(layer_fn: t.Callable[[], nn.Module],
              repeat_fn: t.Callable[[t.Callable[[], nn.Module]], nn.Module]):
     """Creates a repeated forward layer with a skip connection from the input to the output."""
-    return ResidualModule(partial(repeat_fn, layern_fn))
+    return ResidualModule(partial(repeat_fn, layer_fn))
 
 
 class ResidualModule(nn.Module):
@@ -134,7 +136,7 @@ class ResCNN(nn.Module):
         H, W = 64, 64
 
         # Create layer factories
-        auto_pool   = partial(AutoPool, reduce=reduce)
+        auto_pool   = partial(AutoPool, reduce)
         auto_repeat = partial(AutoRepeat, count=repeat)
         auto_activ  = partial(AutoActiv, activ_fn=activ_fn)
         auto_skip   = partial(AutoSkip, repeat_fn=auto_repeat)
@@ -198,17 +200,21 @@ class ResCNNClassifierArgs(ClassifierArgs, ResCNNArgs):
 
 class ResCNNClassifier(ClassifierModule):
     def __init__(self, **kwargs: t.Unpack[ResCNNClassifierArgs]) -> None:
-        super(ResCNNClassifier, self).__init__(name='ResCNN', **kwargs)
-        self.focalnet = ResCNN(**kwargs)
+        super(ResCNNClassifier, self).__init__(name=cast(t.Any, kwargs.pop(cast(t.Any, 'name'), 'ResCNN')), **kwargs)
+        self.rescnn = ResCNN(**kwargs)
 
     def forward(self, x: Tensor) -> Tensor:
-        return self.focalnet(x)
+        return self.rescnn(x)
 
 
 ############ Objective ############
 class ResCNNObjective(F1ScoreObjective):
-    def __init__(self):
-        super(ResCNNObjective, self).__init__('FocalNet')
+    def __init__(self,
+                 batch_size: int,
+                 epochs: int,
+                 data_module: t.Callable[[], LightningDataModule],
+                 logger_fn: partial[Logger]):
+        super(ResCNNObjective, self).__init__('ResCNN', batch_size, epochs, data_module, logger_fn)
 
     def model(self, run: Run) -> Tuple[LightningModule, Metric[Tensor]]:
         model = ResCNNClassifier(

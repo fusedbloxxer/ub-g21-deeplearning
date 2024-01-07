@@ -5,7 +5,6 @@ from torch.utils.data import DataLoader
 import lightning as tl
 import pathlib as pl
 
-from . import num_workers, prefetch_factor, pin_memory, gen_torch
 from .data_utils import TrainSplit, load_batched_data
 
 
@@ -13,13 +12,12 @@ class GICDataModule(tl.LightningDataModule):
     def __init__(self,
                  path: pl.Path,
                  batch_size: int,
-                 split: TrainSplit=(0.75, 0.25),
-                 pin: bool = pin_memory,
-                 workers: int = num_workers,
-                 prefetch: int | None = prefetch_factor,
-                 gen: torch.Generator=gen_torch,
-                 ) -> None:
-        super().__init__()
+                 pin: bool,
+                 workers: int,
+                 prefetch: int | None,
+                 gen: torch.Generator,
+                 split: TrainSplit=(0.75, 0.25)) -> None:
+        super(GICDataModule, self).__init__()
 
         # Loading and reproducibility settings
         self.__path = path
