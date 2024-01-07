@@ -62,30 +62,16 @@ def make_parser():
 
     # Allow the user to optimize/train/validate/submit
     root_subcommands = root_command.add_subparsers(title='command', dest='command', required=True)
-    add_subcommand_train(root_subcommands)
-    add_subcommand_valid(root_subcommands)
-    add_subcommand_ensemble(root_subcommands)
-    add_subcommand_optimize(root_subcommands)
-    return root_command
+    root_subcommands.add_parser(name='train', help='train the model over the whole dataset')
+    root_subcommands.add_parser(name='valid', help='train and validate the model against the validation set')
 
-
-def add_subcommand_train(root_subcommands: ap._SubParsersAction):
-    train_parser: Parser = root_subcommands.add_parser(name='train', help='train the model over the whole dataset')
-
-
-def add_subcommand_valid(root_subcommands: ap._SubParsersAction):
-    valid_parser: Parser = root_subcommands.add_parser(name='valid', help='train and validate the model against the validation set')
-
-
-def add_subcommand_ensemble(root_subcommands: ap._SubParsersAction):
     ensemble_parser: Parser = root_subcommands.add_parser(name='ensemble', help='create a bagging ensemble using the model architecture')
     ensemble_parser.add_argument('--members', type=int, default=5, help='the number of models present in the ensemble')
     ensemble_parser.add_argument('mode', choices=['train', 'valid'], help='train an ensemble of models')
 
-
-def add_subcommand_optimize(root_subcommands: ap._SubParsersAction):
     optimize_parser: Parser = root_subcommands.add_parser(name='optimize', help='search for the hyperparameters that minimize validation f1_score')
     optimize_parser.add_argument('--trials', type=int, default=250, help='the number of trials per study')
+    return root_command
 
 
 def setup_env(args: Namespace):
@@ -112,7 +98,7 @@ def setup_env(args: Namespace):
         project=project_name,
     )
 
-    # Aggregate all configuration files
+    # Aggregate all configuration
     return Config(
         args=args,
         device=device,
