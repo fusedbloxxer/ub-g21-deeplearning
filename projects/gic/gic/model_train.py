@@ -6,42 +6,40 @@ from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.callbacks import ModelCheckpoint as ModelCkpt
 from datetime import datetime as dt
 
-from gic import DATA_PATH, PROJECT_NAME, LOG_PATH, CKPT_PATH, SUBMISSION_PATH
-from gic.data.dataset import GICDataset
-from gic.data.dataloader import GICDataModule
-from gic.learning.focalnet.wrappers import FocalNetClassifier
+from . import DATA_PATH, CKPT_PATH, SUBMISSION_PATH, wn_logger_fn
+from .model_densecnn import DenseCNNClassifier
+from .model_rescnn import ResCNNClassifier
+from .data_dataloader import GICDataModule
+from .data_dataset import GICDataset
 
 
 # Select best model
-model = FocalNetClassifier(
-    lr=4e-4,
-    groups=8,
-    repeat=3,
-    layers=2,
-    chan=128,
-    dense=224,
+model = DenseCNNClassifier(
+    num_classes=GICDataset.num_classes,
+    lr=6e-4,
+    inner=4,
+    repeat=4,
+    features=32,
+    augment=True,
     augment_n=1,
     augment_m=11,
-    augment=True,
-    dropout=0.15,
-    reduce="max",
-    weight_decay=8e-3,
-    conv_order="2 1 0",
-    dropout_dense=0.30,
-    norm_layer='batch',
-    drop_type='spatial',
-    activ_fn='LeakyReLU',
-    num_classes=GICDataset.num_classes,
+    dense=224,
+    pool='max',
+    activ_fn='SiLU',
+    f_drop=0.250,
+    c_drop=0.125,
+    weight_decay=3e-4,
+    factor_c=1,
+    factor_t=1,
 )
 
 # Join training & validation subsets for final submission
 start_time = dt.now().strftime(r'%d_%b_%Y_%H:%M')
-ckpt_path = CKPT_PATH / model.name
+ckpt_path = CKPT_PATH / 'ensemble' / model.name
 loader = GICDataModule(DATA_PATH, 32, 'joint')
-logger = WandbLogger(
-    name=f"{model.name}_Train_{start_time}",
-    project=PROJECT_NAME,
-    save_dir=LOG_PATH)
+logger = wn_logger_fn(
+    name=f"{model.name}_Train_{start_time}"
+)
 ckpt = ModelCkpt(
     save_top_k=-1,
     every_n_epochs=1,
@@ -54,12 +52,12 @@ trainer = Trainer(
     num_sanity_val_steps=0,
     limit_val_batches=0,
     callbacks=[ckpt],
-    max_epochs=3, # 288
+    max_epochs=250,
     logger=logger)
 trainer.fit(model, datamodule=loader)
 
 # Load trained weights from disk
-model = FocalNetClassifier.load_from_checkpoint(ckpt_path / f'{model.name}_epoch=002.ckpt')
+model = DenseCNNClassifier.load_from_checkpoint(ckpt_path / f'1_5_epoch=171.ckpt')
 
 # Predict on test data
 y_hat = t.cast(t.List[Tensor], trainer.predict(model, datamodule=loader, return_predictions=True))

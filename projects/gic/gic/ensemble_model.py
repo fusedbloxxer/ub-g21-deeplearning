@@ -7,15 +7,15 @@ from torcheval.metrics.functional import multiclass_f1_score as f1_score
 from torch.utils.data import DataLoader
 from lightning.pytorch.trainer import Trainer
 from lightning.pytorch.callbacks import ModelCheckpoint as ModelCkpt
-from lightning.pytorch.loggers import WandbLogger as WBLogger
 from lightning import LightningDataModule as DataModule
 from datetime import datetime as dt
 import wandb as wn
 
-from .. import CKPT_PATH, PROJECT_NAME, LOG_PATH, DEVICE
-from .focalnet.wrappers import FocalNetClassifier, FocalNetClassifierArgs
-from .wrappers import ClassifierModule, ClassifierArgs
-from ..data.dataset import GICDataset
+from . import CKPT_PATH, PROJECT_NAME, LOG_PATH, DEVICE, wn_logger_fn
+from .model_densecnn import DenseCNNClassifier, DenseCNNClassifierArgs
+from .model_rescnn import ResCNNClassifier, ResCNNClassifierArgs
+from .model_base import ClassifierModule, ClassifierArgs
+from .data_dataset import GICDataset
 
 
 Model = TypeVar('Model', bound=ClassifierModule, covariant=True)
@@ -36,10 +36,8 @@ class BaggingEnsemble(Generic[Model, Params]):
     def fit(self, epochs: int, data: DataModule, validate: bool=False) -> None:
         start_time = dt.now().strftime(r'%d_%b_%Y_%H:%M')
         for i in range(len(self)):
-            run_logger = WBLogger(
-                name=f"Ensemble_{self.model_name}_{i + 1}_{len(self)}_Train_{start_time}",
-                project=PROJECT_NAME,
-                save_dir=LOG_PATH,
+            run_logger = wn_logger_fn(
+                name=f"Ensemble_{self.model_name}_{i + 1}_{len(self)}_Train_{start_time}"
             )
             model_ckpt = ModelCkpt(
                 save_top_k=-1,
@@ -122,4 +120,5 @@ class BaggingEnsemble(Generic[Model, Params]):
         return len(self.models)
 
 
-FocalNetEnsemble = partial(BaggingEnsemble[FocalNetClassifier, FocalNetClassifierArgs], FocalNetClassifier)
+ResCNNEnsemble = partial(BaggingEnsemble[ResCNNClassifier, ResCNNClassifierArgs], ResCNNClassifier)
+DenseCNNEnsemble = partial(BaggingEnsemble[DenseCNNClassifier, DenseCNNClassifierArgs], DenseCNNClassifier)

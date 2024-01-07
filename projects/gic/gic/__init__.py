@@ -5,8 +5,9 @@ import random as rng
 import pathlib as pl
 import optuna as opt
 import typing as t
-from optuna.integration import WeightsAndBiasesCallback
 import lightning as tl
+from lightning.pytorch.loggers import WandbLogger
+from functools import partial
 
 # Development
 IS_DEBUG = False
@@ -24,9 +25,10 @@ SUBMISSIONS_PATH = ROOT_PATH / 'submissions'
 
 # Versioning
 PROJECT_NAME = 'Generated Image Classification'
-SUBMISSION_NAME = 'submission_38'
+SUBMISSION_NAME = 'submission_49'
 SUBMISSION_PATH = SUBMISSIONS_PATH / f'{SUBMISSION_NAME}.csv'
 so.environ['WANDB_NOTEBOOK_NAME'] = str(NOTEBOOKS_PATH / 'main.ipynb')
+wn_logger_fn = partial(WandbLogger, dir=LOG_PATH, offline=IS_RELEASE, anonymous=IS_RELEASE, project=PROJECT_NAME)
 
 # Hardware
 mix_float = True
@@ -38,7 +40,7 @@ pin_memory= True
 num_workers= 4
 
 # Reproducibility
-SEED = 10_052
+SEED = 10_056
 rng.seed(SEED)
 ny.random.seed(SEED)
 torch.manual_seed(SEED)

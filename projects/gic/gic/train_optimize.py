@@ -5,12 +5,10 @@ from lightning import Trainer
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.callbacks import ModelCheckpoint as ModelCkpt
 
-from gic import *
-from gic.data.dataset import GICDataset
-from gic.data.dataloader import GICDataModule
-from gic.learning.densecnn.objectives import DenseCNNObjective
-from gic.learning.focalnet.objectives import FocalNetObjective
-from gic.learning.focalnet.wrappers import FocalNetClassifier
+from . import *
+from .data_dataset import GICDataset
+from .data_dataloader import GICDataModule
+from .model_densecnn import DenseCNNObjective
 
 
 # Find hyperparams that maximize the validation f1 score

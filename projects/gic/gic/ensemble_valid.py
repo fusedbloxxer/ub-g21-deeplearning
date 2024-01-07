@@ -1,14 +1,14 @@
-from gic.learning.ensemble import FocalNetEnsemble
-from gic.data.dataloader import GICDataModule
-from gic.data.dataset import GICDataset
-from gic import DATA_PATH
+from .ensemble_model import ResCNNEnsemble, DenseCNNEnsemble
+from .data_dataloader import GICDataModule
+from .data_dataset import GICDataset
+from . import DATA_PATH
 
 
 # Separate train and validation to measure model performance
 data = GICDataModule(DATA_PATH, 32, 'disjoint')
 
 # Create an ensemble of five models using the best architecture
-ensemble = FocalNetEnsemble(
+ensemble = ResCNNEnsemble(
     n_models=5,
     args={
         'lr': 4e-4,
@@ -33,7 +33,7 @@ ensemble = FocalNetEnsemble(
 )
 
 # Train the ensemble in sequential manner
-ensemble.fit(248, data, validate=True)
+ensemble.fit(251, data, validate=True)
 
 # Validate the ensemble
-ensemble.validate(248, data)
+ensemble.validate(250, data)

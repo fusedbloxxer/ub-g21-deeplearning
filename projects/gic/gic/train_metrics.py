@@ -1,7 +1,5 @@
-from typing import Iterable, Optional
-import torch
+from typing import Iterable
 from torch import no_grad, device
-import torch.nn as nn
 from torch import Tensor, tensor, zeros, cat
 from torcheval.metrics.metric import Metric
 from sklearn.metrics import confusion_matrix

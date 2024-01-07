@@ -1,15 +1,14 @@
-from gic import DATA_PATH, SUBMISSION_PATH
-from gic.learning.ensemble import FocalNetEnsemble
-from gic.data.dataloader import GICDataModule
-from gic.data.dataset import GICDataset
-
+from . import DATA_PATH, SUBMISSION_PATH
+from .ensemble_model import ResCNNEnsemble, DenseCNNEnsemble
+from .data_dataloader import GICDataModule
+from .data_dataset import GICDataset
 
 # Use train and validation subsets for final submission
-data = GICDataModule(DATA_PATH, 32, 'joint')
+data = GICDataModule(DATA_PATH, 32, 'disjoint')
 
 # Create an ensemble of five models using the best architecture
-ensemble = FocalNetEnsemble(
-    n_models=10,
+ensemble = ResCNNEnsemble(
+    n_models=5,
     args={
         'lr': 4e-4,
         'chan': 128,
@@ -33,10 +32,10 @@ ensemble = FocalNetEnsemble(
 )
 
 # Train the ensemble in sequential manner
-ensemble.fit(248, data, validate=False)
+ensemble.fit(176, data, validate=False)
 
 # Load the final epoch for subission
-ensemble.load_ensemble(247)
+ensemble.load_ensemble(88)
 
 # Predict over test data
 preds = ensemble.predict(data, 'test').sum(dim=1).argmax(dim=-1)
