@@ -49,7 +49,7 @@ def make_parser():
     gr_runtime = root_command.add_argument_group('runtime')
     gr_runtime.add_argument('--debug', action='store_false', help='disable cloud logging with Wandb')
     gr_runtime.add_argument('--device', choices=['cpu', 'cuda'], default='cuda', help='device used for training and inference')
-    gr_runtime.add_argument('-s', '--seed', action='store', type=int, default=10_056, help='reproducibility')
+    gr_runtime.add_argument('--seed', action='store', type=int, default=10_056, help='reproducibility')
     gr_runtime.add_argument('--prefetch', type=int, default=4, help='preload batches')
     gr_runtime.add_argument('--pinning', type=bool, default=True, help='enable memory pinning')
     gr_runtime.add_argument('--workers', type=int, default=4, help='number of processes used to load batches')
@@ -65,11 +65,11 @@ def make_parser():
     root_subcommands.add_parser(name='train', help='train the model over the whole dataset')
     root_subcommands.add_parser(name='valid', help='train and validate the model against the validation set')
 
-    ensemble_parser: Parser = root_subcommands.add_parser(name='ensemble', help='create a bagging ensemble using the model architecture')
+    ensemble_parser: Parser = root_subcommands.add_parser(name='ensemble', help='train a bagging ensemble using the model architecture')
     ensemble_parser.add_argument('--members', type=int, default=5, help='the number of models present in the ensemble')
     ensemble_parser.add_argument('mode', choices=['train', 'valid'], help='train an ensemble of models')
 
-    optimize_parser: Parser = root_subcommands.add_parser(name='optimize', help='search for the hyperparameters that minimize validation f1_score')
+    optimize_parser: Parser = root_subcommands.add_parser(name='optimize', help='search for the hyperparameters that maximize validation f1_score')
     optimize_parser.add_argument('--trials', type=int, default=250, help='the number of trials per study')
 
     # Add Denoising AutoEncoder separate training

@@ -24,8 +24,13 @@ class GICDataset(data.Dataset[t.Tuple[Tensor, Tensor] | Tensor]):
                  split: DataSplit) -> None:
         super(GICDataset, self).__init__()
 
+        # Map names
+        if split == 'valid':
+            self.split_: str = 'val'
+        else:
+            self.split_: str = split
+
         # Paths
-        self.split_ = split
         self.__root = path
         self.__meta = self.__root / f'{self.split_}.csv'
         self.__imag = self.__root / f'{self.split_}_images'

@@ -31,6 +31,7 @@ ipykernel = "^6.27.1"
 cleanvision = "^0.3.5"
 ipywidgets = "^8.1.1"
 rich = "^13.7.0"
+seaborn = "^0.13.1"
 
 [build-system]
 requires = ["poetry-core"]
