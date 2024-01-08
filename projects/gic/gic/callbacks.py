@@ -42,11 +42,15 @@ class ConfusionMatrix(Metric[Tensor]):
 
 
 class ReconstructVizCallback(Callback):
-    def __init__(self) -> None:
+    def __init__(self, viz_iter: int) -> None:
         super(ReconstructVizCallback, self).__init__()
         self.masking_noise = MaskingNoiseTransform()
+        self.viz_iter = viz_iter
 
     def on_train_epoch_end(self, tr: Trainer, model: LightningModule) -> None:
+        if tr.current_epoch == 0 or tr.current_epoch % self.viz_iter != 0:
+            return
+
         # Fetch dataset
         dl: DataLoader[Tensor] = cast(DataLoader[Tensor], tr.train_dataloader)
         ds: Dataset[Tensor] = cast(Dataset[Tensor], dl.dataset)

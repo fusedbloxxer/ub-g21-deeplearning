@@ -17,7 +17,7 @@ import pathlib as pl
 from functools import partial
 
 from .setup import Config
-from .train_metrics import ConfusionMatrix
+from .callbacks import ConfusionMatrix
 from .data_dataloader import GICDataModule
 from .data_transform import PreprocessTransform, RobustAugmentTransform as RATransform
 

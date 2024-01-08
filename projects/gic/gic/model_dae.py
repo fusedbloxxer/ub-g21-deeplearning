@@ -146,10 +146,10 @@ class DAEClassifier(nn.Module):
 
         # Use pretrained denoising autoencoder
         self.autoencoder = ConvAutoEncoder(64, 64)
-        self.autoencoder.load_state_dict(OrderedDict(list(map(lambda x: (x[0].replace('autoencoder.', ''), x[1]), torch.load(str(ckpt_path / 'dae.pt')).items()))))
+        self.autoencoder.load_state_dict(OrderedDict(list(map(lambda x: (x[0].replace('autoencoder.', ''), x[1]), torch.load(str(ckpt_path / 'train' / 'DAE' / 'DAE.pt')).items()))))
 
         # Choose an activation
-        activ = nn.ModuleDict({'silu': nn.SiLU(), 'leak': nn.LeakyReLU()})[activ_fn]
+        activ = nn.ModuleDict({'silu': nn.SiLU(), 'leak': nn.LeakyReLU()})[activ_fn.lower()]
 
         # Train a classifier on top
         self.classifier = nn.Sequential(

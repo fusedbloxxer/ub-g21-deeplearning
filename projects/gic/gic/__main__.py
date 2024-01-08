@@ -7,14 +7,18 @@ from functools import partial
 from torch import Tensor
 from lightning import Trainer
 from lightning.pytorch.callbacks import ModelCheckpoint as ModelCkpt
+from lightning.pytorch.callbacks import RichModelSummary as SummaryCallback
+from lightning.pytorch.callbacks import RichProgressBar as ProgressCallback
 from datetime import datetime as dt
 
+from gic.callbacks import ReconstructVizCallback
 from gic.model_ensemble import BaggingEnsemble
 from gic.data_dataloader import GICDataModule
 from gic.data_dataset import GICDataset
 from gic.model_densecnn import DenseCNNObjective
 from gic.model_rescnn import ResCNNObjective
 from gic.model_dae import DAEClasifierObjective
+from gic.model_dae import DAEModule
 from gic.hyperparams import get_model_hparams
 from gic.setup import make_parser, setup_env
 
@@ -161,6 +165,29 @@ match config.command:
                 ensemble.fit(config.epochs, data, validate=True)
 
                 # Validate the ensemble
-                ensemble.validate(config.epochs - 1, data)
+                ensemble.validate(config.epochs, data)
             case _:
                 raise ValueError('invalid ensemble --mode {}'.format(config.args.mode))
+    case 'denoising':
+        # Enforce arg constraint
+        if config.model != 'dae':
+            raise ValueError('dae model needs to be specified for denoising task')
+
+        # Create AutoEncoder for denoising task
+        model = DAEModule(chan=64, latent=64)
+
+        # Create Visualizers to evaluate progress
+        prog_clbk = ProgressCallback()
+        sum_clbk  = SummaryCallback(max_depth=5)
+        viz_clbk  = ReconstructVizCallback(config.args.viz_iter)
+
+        # Load training subset for denoising task
+        datamodule = data_module_fn(split='disjoint')
+
+        # Train the DAE
+        trainer = Trainer(max_epochs=config.epochs, callbacks=[viz_clbk, prog_clbk, sum_clbk])
+        trainer.fit(model, datamodule)
+
+        # Save the weights and load them later for classification
+        (config.ckpt_path / 'train' / model.name).mkdir(parents=True, exist_ok=True)
+        torch.save(model.state_dict(), config.ckpt_path / 'train' / model.name / f'{model.name}.pt')

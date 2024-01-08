@@ -31,7 +31,7 @@ class Config(object):
     epochs: int
     project_name: str
     model: Literal['rescnn', 'densecnn', 'dae']
-    command: t.Literal['train', 'valid', 'ensebmle', 'optimize']
+    command: t.Literal['train', 'valid', 'ensebmle', 'optimize', 'denoising']
 
 
 def make_parser():
@@ -71,6 +71,10 @@ def make_parser():
 
     optimize_parser: Parser = root_subcommands.add_parser(name='optimize', help='search for the hyperparameters that minimize validation f1_score')
     optimize_parser.add_argument('--trials', type=int, default=250, help='the number of trials per study')
+
+    # Add Denoising AutoEncoder separate training
+    denoise_parser: Parser = root_subcommands.add_parser(name='denoising', help='train an autoencoder for denoising task')
+    denoise_parser.add_argument('--viz-iter', type=int, default=10, help='visualize every n epochs the model denoising performance')
     return root_command
 
 
