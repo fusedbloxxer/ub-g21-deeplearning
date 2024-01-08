@@ -48,7 +48,7 @@ class ReconstructVizCallback(Callback):
         self.viz_iter = viz_iter
 
     def on_train_epoch_end(self, tr: Trainer, model: LightningModule) -> None:
-        if tr.current_epoch == 0 or tr.current_epoch % self.viz_iter != 0:
+        if tr.current_epoch % self.viz_iter != 0:
             return
 
         # Fetch dataset
