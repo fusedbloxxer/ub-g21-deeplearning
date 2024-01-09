@@ -15,7 +15,7 @@ import matplotlib.pyplot as pt
 from PIL import Image
 import seaborn as sea
 
-from gic.callbacks import ReconstructVizCallback
+from gic.callbacks import ReconstructVizCallback, ConfusionMatrix
 from gic.model_ensemble import BaggingEnsemble
 from gic.data_dataloader import GICDataModule
 from gic.data_dataset import GICDataset
@@ -173,12 +173,26 @@ match config.command:
             case 'valid':
                 # Separate train and validation to measure model performance
                 data = data_module_fn(split='disjoint')
+                valid = torch.tensor(GICDataset(config.data_path, 'valid').data_['Class'].values)
 
                 # Train the ensemble in sequential manner
                 ensemble.fit(config.epochs, data, validate=True)
 
                 # Validate the ensemble
                 ensemble.validate(config.epochs, data)
+
+                # Showcase the model performance
+                preds = ensemble.predict(data, 'valid').sum(dim=1)
+
+                # Show how the well the model performed
+                mat = ConfusionMatrix().update(preds, valid).compute()
+                color_range = sea.color_palette('magma', as_cmap=True)
+                f = pt.figure(figsize=(10, 10))
+                graph = sea.heatmap(mat, cbar=True, square=True, cmap=color_range, xticklabels=2, yticklabels=2)
+                graph.set_ylabel('Ground-Truth Label')
+                graph.set_xlabel('Predicted Label')
+                graph.set_title('Confusion Matrix')
+                pt.show()
             case _:
                 raise ValueError('invalid ensemble --mode {}'.format(config.args.mode))
     case 'denoising':
