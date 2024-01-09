@@ -291,7 +291,7 @@ class DAEClasifierObjective(F1ScoreObjective):
 
     def model(self, run: Run) -> Tuple[LightningModule, Metric[Tensor]]:
         model = DAEClasifier(
-            lr=6e-4,
+            lr=run.suggest_float(name='lr', low=5e-5, high=2e-4),
             batch='batch',
             ckpt_path=self.ckpt_path,
             num_classes=GICDataset.num_classes,

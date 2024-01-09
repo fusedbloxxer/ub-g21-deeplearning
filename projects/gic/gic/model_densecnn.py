@@ -204,7 +204,6 @@ class DenseCNNClassifier(ClassifierModule):
     def __init__(self, **kwargs: Unpack[DenseCNNClassifierArgs]):
         super(DenseCNNClassifier, self).__init__(name=t.cast(t.Any, kwargs.pop(t.cast(t.Any, 'name'), 'DenseCNN')), **kwargs)
         self.net_densecnn = DenseCNN(**kwargs)
-        
 
     def forward(self, x: Tensor) -> Tensor:
         return self.net_densecnn(x)
@@ -232,20 +231,20 @@ class DenseCNNObjective(F1ScoreObjective):
     def model(self, run: Run) -> t.Tuple[LightningModule, Metric[Tensor]]:
         model = DenseCNNClassifier(
             num_classes=GICDataset.num_classes,
-            lr=6e-4,
-            inner=4,
-            repeat=4,
-            features=32,
-            augment=True,
-            augment_n=1,
-            augment_m=11,
-            dense=224,
-            pool='max',
-            activ_fn='SiLU',
+            lr=run.suggest_float('lr', 9e-5, 6e-4),
+            inner=run.suggest_categorical('inner', [1, 2, 3, 4]),
+            repeat=run.suggest_categorical('repeat', [1, 2, 3, 4]),
+            features=run.suggest_categorical('features', [8, 16, 24, 32]),
+            augment=run.suggest_categorical('augment', [True]),
+            augment_n=run.suggest_categorical('augment_n', [1, 2, 3]),
+            augment_m=run.suggest_categorical('augment_m', [11, 5, 4, 9, 7]),
             f_drop=run.suggest_float('f_drop', 0.2, 0.30),
             c_drop=run.suggest_float('c_drop', 0.1, 0.15),
+            dense=run.suggest_categorical('dense', [224, 256, 312]),
             weight_decay=run.suggest_float('weight_decay', 1e-4, 6e-3),
             factor_c=run.suggest_float('factor_c', 0.75, 1.0, step=0.25),
             factor_t=run.suggest_categorical('factor_t', [0.75, 1.0, 1.5]),
+            pool=t.cast(t.Any, run.suggest_categorical('pool', ['max', 'avg'])),
+            activ_fn=t.cast(t.Any, run.suggest_categorical('activ_fn', ['ReLU', 'SiLU', 'GELU', 'LeakyReLU'])),
         )
         return model, model._metric_valid_f1_score

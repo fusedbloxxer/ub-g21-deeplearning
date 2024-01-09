@@ -10,6 +10,10 @@ from lightning.pytorch.callbacks import ModelCheckpoint as ModelCkpt
 from lightning.pytorch.callbacks import RichModelSummary as SummaryCallback
 from lightning.pytorch.callbacks import RichProgressBar as ProgressCallback
 from datetime import datetime as dt
+from sklearn.cluster import KMeans
+import matplotlib.pyplot as pt
+from PIL import Image
+import seaborn as sea
 
 from gic.callbacks import ReconstructVizCallback
 from gic.model_ensemble import BaggingEnsemble
@@ -121,6 +125,15 @@ match config.command:
 
         # Perform final validation using last weights
         trainer.validate(model, datamodule=data)
+
+        # Show how the well the model performed
+        color_range = sea.color_palette('magma', as_cmap=True)
+        f = pt.figure(figsize=(10, 10))
+        graph = sea.heatmap(model._metric_valid_confm.compute(), cbar=True, square=True, cmap=color_range, xticklabels=2, yticklabels=2)
+        graph.set_ylabel('Ground-Truth Label')
+        graph.set_xlabel('Predicted Label')
+        graph.set_title('Confusion Matrix')
+        pt.show()
     case 'ensemble':
         # Select the best model architecture
         model_type, model_hparams = get_model_hparams(config.model, config.ckpt_path)
@@ -191,3 +204,43 @@ match config.command:
         # Save the weights and load them later for classification
         (config.ckpt_path / 'train' / model.name).mkdir(parents=True, exist_ok=True)
         torch.save(model.state_dict(), config.ckpt_path / 'train' / model.name / f'{model.name}.pt')
+    case 'cluster':
+        # Enforce arg constraint
+        if config.model != 'dae':
+            raise ValueError('dae model needs to be specified for cluster task')
+
+        # Create AutoEncoder for denoising task
+        model = DAEModule(chan=64, latent=64).to(config.device)
+        model.load_state_dict(torch.load(config.ckpt_path / 'train' / model.name / f'{model.name}.pt'))
+        model.requires_grad_(False)
+        model.eval()
+
+        # Load training data
+        data_train = GICDataset(config.data_path, 'train')
+        embeddings: t.List[torch.Tensor] = []
+
+        # Perform Img2Embedding
+        for i in range(len(data_train)):
+            X, _ = data_train[i]
+            l = model.autoencoder.encode(X.unsqueeze(0).to(config.device)).cpu()
+            embeddings.append(l.flatten())
+        train_embeddings = torch.stack(embeddings, dim=0)
+        kmeans = KMeans(n_clusters=100)
+        kmeans.fit(train_embeddings)
+
+        # Retain the ImagePaths for each image inside each cluster
+        groups = {}
+        for i, l in zip(range(len(data_train)), kmeans.labels_):
+            data_train.data_.iloc[i]
+            if l not in groups.keys():
+                groups[l] = []
+            groups[l].append(data_train.data_.iloc[i]['Image'])
+
+        # Display 16 images inside each cluster
+        for i, (g, imgs) in enumerate(sorted(groups.items(), key=lambda x: x[0])):
+            f, ax = pt.subplots(1, 16, figsize=(20, 2.5))
+            for j in range(min(16, len(imgs))):
+                with Image.open(config.data_path / 'train_images' / imgs[j]) as img:
+                    ax[j].set_xlabel(f'group: {g}')
+                    ax[j].imshow(img)
+            pt.show()

@@ -64,6 +64,7 @@ def make_parser():
     root_subcommands = root_command.add_subparsers(title='command', dest='command', required=True)
     root_subcommands.add_parser(name='train', help='train the model over the whole dataset')
     root_subcommands.add_parser(name='valid', help='train and validate the model against the validation set')
+    root_subcommands.add_parser(name='cluster', help='cluster the training set and vizualize similar images')
 
     ensemble_parser: Parser = root_subcommands.add_parser(name='ensemble', help='train a bagging ensemble using the model architecture')
     ensemble_parser.add_argument('--members', type=int, default=5, help='the number of models present in the ensemble')
